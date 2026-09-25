@@ -82,3 +82,12 @@ def test_planner_limits(monkeypatch):
     # one clap is never enough, whatever the model says
     assert planner.run({"claps": 1}).action == "clap"
     assert planner.run({"claps": planner.MAX_CLAPS}).action == "done"
+
+
+def test_products_are_off_without_a_key(monkeypatch):
+    from clapback import products
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(products, "load_dotenv", lambda *a, **k: None)
+    products.search.cache_clear()
+    assert products.for_plan(["panel_50", "rug"]) == {"panel_50": [], "rug": []}

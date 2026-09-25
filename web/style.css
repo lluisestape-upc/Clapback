@@ -209,6 +209,7 @@ textarea {
 .plan-items { list-style: none; padding: 0; margin: 14px 0 8px; }
 .plan-items li { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .plan-items li span { color: var(--muted); font-size: 14px; display: block; }
+.plan-items .shop a { color: var(--accent); text-decoration: none; font-size: 13.5px; }
 .plan-items b { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .plan-total { display: flex; justify-content: space-between; font-weight: 700; margin: 6px 0 12px; }
 .plan-summary { margin: 10px 0; }

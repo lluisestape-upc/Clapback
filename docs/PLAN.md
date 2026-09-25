@@ -1,5 +1,18 @@
 # Plan
 
+## Status (2026-09-25)
+
+Built: typed + AR room input, clap capture, acoustics engine (decay, modes,
+Sabine/Eyring, calibration, targets), STI/C50 and bass maps in 3D, the three
+Nemotron agents with fallbacks, Tavily product links. 35 tests.
+
+Still open:
+- **Validate RT from a clap against a reference** (REW sweep or a room with a
+  known RT60). Real phone claps are consistent (0.33–0.37 s, T20 ≈ T30) and
+  the phone applies no voice processing, but the absolute value is unverified.
+- Test the AR scan on the phone (can't be tested in a desktop browser).
+- Tavily key, deploy somewhere public for the Devpost demo URL, the video.
+
 Deadline: 2026-10-30 10:00 PDT (19:00 Barcelona). Target submission: 10-29.
 
 | When | What |

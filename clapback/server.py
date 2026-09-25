@@ -16,7 +16,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import materials, targets
+from . import materials, products, targets
 from .acoustics import decay, maps, modes, reverb, treat
 from .agents import intake, optimizer, planner
 from .room import Room
@@ -228,9 +228,11 @@ def make_plan(req: PlanRequest) -> dict:
     plan = optimizer.run(room, req.goal, measured, target, req.budget_eur, rep.get("bass_notes"))
     names = {c["id"]: c["name"] for c in treat.catalogue().values()}
     out = plan.model_dump()
+    shop = products.for_plan([t["id"] for t in out["treatments"]])
     for t in out["treatments"]:
         t["name"] = names.get(t["id"], t["id"])
         t["cost_eur"] = round(treat.catalogue()[t["id"]]["eur_per_m2"] * t["area_m2"])
+        t["products"] = shop.get(t["id"], [])
     return out
 
 

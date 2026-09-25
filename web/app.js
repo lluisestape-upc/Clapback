@@ -480,7 +480,10 @@ const WHERE = { wall: "on the walls", floor: "on the floor", ceiling: "on the ce
 function renderPlan(p) {
   const items = p.treatments.length
     ? `<ul class="plan-items">${p.treatments.map((t) => `
-        <li><div>${esc(t.name)}<span>${t.area_m2} m² ${WHERE[t.where] ?? t.where}</span></div><b>€${t.cost_eur}</b></li>`).join("")}
+        <li><div>${esc(t.name)}<span>${t.area_m2} m² ${WHERE[t.where] ?? t.where}</span>${
+          t.products?.length ? `<span class="shop">${t.products.slice(0, 2).map((x) =>
+            `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.site)}</a>`).join(" · ")}</span>` : ""
+        }</div><b>€${t.cost_eur}</b></li>`).join("")}
       </ul><div class="plan-total"><span>Total</span><span>€${p.cost_eur}</span></div>`
     : "";
   const tries = p.trace.filter((s) => s.tool);
