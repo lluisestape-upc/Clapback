@@ -105,14 +105,23 @@
     <!-- 5. Results -->
     <section class="screen" data-screen="results" hidden>
       <h2>Your room</h2>
-      <div class="verdict" id="verdict"></div>
+      <div class="verdict" id="verdict" aria-live="polite"></div>
+      <div class="card" id="rt-card" hidden>
+        <h3>How long the echo lasts</h3>
+        <p class="sub small">Per pitch, from low to high. The shaded band is the target for your use.</p>
+        <div id="rt-chart"></div>
+      </div>
+      <div class="card" id="bass-card" hidden>
+        <h3>Notes that may boom</h3>
+        <p class="sub small">The room's shape makes these bass notes ring louder than the rest.</p>
+        <div class="row" id="bass-notes"></div>
+      </div>
       <div class="result-3d" id="view3d" aria-label="3D view of the room"></div>
       <dl class="stats" id="stats"></dl>
       <div class="note">
         <strong>Coming next</strong>
-        <p>Echo time per frequency, bass hot spots, a speech-clarity map and a
-        shopping list that fits your budget. The measurement engine is being
-        built; your clap has been saved so it can be analysed.</p>
+        <p>A speech-clarity map of the room and a shopping list of fixes that
+        fits your budget.</p>
       </div>
       <div class="actions">
         <button class="secondary" id="btn-restart">Measure another room</button>

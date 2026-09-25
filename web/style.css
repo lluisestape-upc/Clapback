@@ -165,11 +165,29 @@ textarea {
 .coach.good { color: var(--good); } .coach.warn { color: var(--warn); } .coach.bad { color: var(--bad); }
 
 /* Results */
+.card { background: var(--surface); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
+.card h3 { margin: 0 0 2px; font-size: 18px; }
+.sub.small { font-size: 14px; margin-bottom: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.note-chip { background: var(--accent-soft); color: var(--fg); border-radius: 12px; padding: 8px 12px; font-size: 15px; }
+.note-chip b { font-variant-numeric: tabular-nums; }
+.note-chip small { color: var(--muted); display: block; font-size: 12.5px; }
+.verdict h3 { margin: 4px 0 4px; font-size: 26px; letter-spacing: -0.01em; }
+.verdict.too_live h3 { color: var(--warn); } .verdict.too_dead h3 { color: #1c7ed6; } .verdict.good h3 { color: var(--good); }
+.gauge { position: relative; height: 12px; border-radius: 6px; background: var(--line); margin: 16px 0 6px; }
+.gauge .zone { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--good) 35%, transparent); border-radius: 6px; }
+.gauge .dot { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--accent); border: 3px solid var(--surface); box-shadow: var(--shadow); }
+.gauge-labels { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+.spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; margin: 6px 0 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#rt-chart svg { width: 100%; height: auto; display: block; }
+#rt-chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+
 .verdict { background: var(--surface); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); margin-bottom: 14px; }
 .verdict .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
 .badge.good { background: #d3f9d8; color: #1b5e20; } .badge.warn { background: #ffe8cc; color: #8a3b00; } .badge.bad { background: #ffe3e3; color: #8a1c1c; }
 .verdict p { margin: 4px 0 0; color: var(--muted); }
-.result-3d { height: 260px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.result-3d { height: 240px; margin-bottom: 4px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
 .stats div { background: var(--surface); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
 .stats dt { font-size: 13px; color: var(--muted); }

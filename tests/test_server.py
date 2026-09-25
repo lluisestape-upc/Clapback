@@ -55,3 +55,32 @@ def test_clap_upload_is_saved(tmp_path, monkeypatch):
     assert out["peak_dbfs"] == -6.0
     assert len(list(tmp_path.glob("*.wav"))) == 1
     assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_clap_is_analysed_with_room(tmp_path, monkeypatch):
+    import io
+    import json
+
+    import soundfile as sf
+
+    from clapback import server
+    from tests.test_acoustics import synthetic_clap
+
+    monkeypatch.setattr(server, "RECORDINGS", tmp_path)
+    x, fs = synthetic_clap(0.9)
+    buf = io.BytesIO()
+    sf.write(buf, x.astype("float32"), fs, format="WAV", subtype="FLOAT")
+    room = {
+        "floor": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 4}, {"x": 0, "y": 4}],
+        "height": 2.5,
+        "surfaces": [{"kind": "floor", "material": "wood_floor_on_joists"}],
+    }
+    out = client.post(
+        "/api/clap",
+        files={"audio": ("clap.wav", buf.getvalue(), "audio/wav")},
+        data={"room": json.dumps(room), "goal": "voice"},
+    ).json()
+    assert abs(out["rt_mid_s"] - 0.9) < 0.15
+    assert out["verdict"]["level"] == "too_live"
+    assert out["bass_notes"][0]["freq_hz"] < out["schroeder_hz"]
+    assert len(out["model"]["absorption_factor"]) == 6

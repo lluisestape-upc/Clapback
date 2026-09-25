@@ -12,7 +12,7 @@ const state = {
   goal: null,
   dims: { length: 5.0, width: 4.0, height: 2.6 },
   scanned: null,           // Room from the AR scan, if used
-  answers: { floor: null, walls: null, ceiling: null, windows: null },
+  answers: { floor: null, walls: null, ceiling: null, furnishing: null, windows: null },
   notes: "",
   clap: null,              // { quality, upload }
 };
@@ -147,6 +147,11 @@ const QUESTIONS = [
     { label: "Plasterboard", mat: "gypsum_board_on_studs" },
     { label: "Acoustic tiles", mat: "acoustic_ceiling_tile" },
   ]},
+  { key: "furnishing", title: "How furnished is it?", options: [
+    { label: "Almost empty", furn: "empty" },
+    { label: "Some furniture", furn: "some" },
+    { label: "Full: bed or sofa, shelves, curtains", furn: "full" },
+  ]},
   { key: "windows", title: "Windows", options: [
     { label: "None", area: 0 },
     { label: "One small", area: 1.5 },
@@ -181,7 +186,7 @@ function currentRoom() {
       { x: state.dims.length, y: state.dims.width }, { x: 0, y: state.dims.width },
     ],
   };
-  return { ...base, surfaces: buildSurfaces(base) };
+  return { ...base, surfaces: buildSurfaces(base), furnishing: pick("furnishing", { furn: "some" }).furn };
 }
 
 function pick(key, fallback) {
@@ -258,12 +263,13 @@ async function doClap() {
   $("btn-retry").hidden = false;
   $("clap-next").disabled = q.level === "bad";
 
-  state.clap = { quality: q, settings, upload: upload(blob) };
+  state.clap = { quality: q, settings, upload: upload(blob, settings) };
   busy = false;
 }
 
-async function upload(blob) {
+async function upload(blob, settings) {
   const form = new FormData();
+  form.append("mic", JSON.stringify(settings));
   form.append("audio", blob, "clap.wav");
   form.append("room", JSON.stringify(currentRoom()));
   form.append("goal", state.goal ?? "");
@@ -277,32 +283,106 @@ $("btn-retry").addEventListener("click", doClap);
 
 // ---------- results ----------
 
+const BAND_LABELS = { 125: "Low", 250: "", 500: "", 1000: "Mid", 2000: "", 4000: "High" };
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+
+function noteName(f) {
+  const n = Math.round(12 * Math.log2(f / 440) + 69);
+  return `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
+}
+
 async function renderResults() {
   const room = currentRoom();
   showRoom($("view3d"), room);
   const q = state.clap?.quality;
-  const volume = state.dims.length * state.dims.width * state.dims.height;
   const goal = GOALS.find((g) => g.id === state.goal);
+  const v = $("verdict");
 
-  $("verdict").innerHTML = q ? `
-    <span class="badge ${q.level}">${q.level === "good" ? "Clean measurement" : "Usable measurement"}</span>
-    <strong>${goal ? `Target: ${goal.title.toLowerCase()}` : "Your room"}</strong>
-    <p>Your clap rose ${Math.round(q.rangeDb)} dB above the background noise.
-    ${q.rangeDb >= 35 ? "That's enough to measure how long the echo lasts." : "More would make the echo measurement more reliable."}</p>`
-    : `<span class="badge warn">No clap yet</span><p>Go back one step and clap.</p>`;
+  if (!state.clap) {
+    v.className = "verdict";
+    v.innerHTML = `<span class="badge warn">No clap yet</span><p>Go back one step and clap.</p>`;
+    return;
+  }
+
+  v.className = "verdict";
+  v.innerHTML = `<div class="spinner" aria-hidden="true"></div><p>Listening back to your clap…</p>`;
+  $("rt-card").hidden = $("bass-card").hidden = true;
+
+  const res = await state.clap.upload;
+  if (!res) {
+    v.innerHTML = `<span class="badge bad">Couldn't reach the server</span>
+      <p>Check the connection and clap again.</p>`;
+    return;
+  }
+
+  const vd = res.verdict;
+  v.className = `verdict ${vd.level}`;
+  v.innerHTML = `
+    <span class="badge ${q.level}">${goal ? goal.title : "Your room"}</span>
+    <h3>${vd.headline}</h3>
+    <p>${vd.detail}</p>
+    ${res.rt_mid_s ? gauge(res.rt_mid_s, vd.target_s) : ""}`;
+
+  if (res.bands?.some((b) => b.rt_s)) {
+    $("rt-chart").innerHTML = rtChart(res.bands, vd.target_s);
+    $("rt-card").hidden = false;
+  }
+  if (res.bass_notes?.length) {
+    $("bass-notes").innerHTML = res.bass_notes.slice(0, 6).map((b) => `
+      <span class="note-chip"><b>${Math.round(b.freq_hz)} Hz</b>
+      <small>≈ ${noteName(b.freq_hz)}${b.count > 1 ? ", stacked" : ""}</small></span>`).join("");
+    $("bass-card").hidden = false;
+  }
 
   const stats = [
-    ["Volume", `${volume.toFixed(0)} m³`],
-    ["Floor", `${(state.dims.length * state.dims.width).toFixed(1)} m²`],
-    ["Clap strength", q ? `${Math.round(q.rangeDb)} dB` : "–"],
-    ["Mic rate", state.clap ? `${(state.clap.settings.sampleRate / 1000).toFixed(1)} kHz` : "–"],
+    ["Echo time (mid)", res.rt_mid_s ? `${res.rt_mid_s.toFixed(2)} s` : "–"],
+    ["Target", `${vd.target_s.toFixed(2)} s`],
+    ["Volume", `${res.volume_m3?.toFixed(0) ?? "–"} m³`],
+    ["Clap strength", `${Math.round(q.rangeDb)} dB`],
   ];
-  $("stats").innerHTML = stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  $("stats").innerHTML = stats.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join("");
+}
+
+// Horizontal scale 0 .. 2×target (at least 1.5 s), green zone = target ±20 %.
+function gauge(rt, target) {
+  const max = Math.max(1.5, target * 2.5, rt * 1.1);
+  const pct = (x) => `${Math.min(100, (x / max) * 100).toFixed(1)}%`;
+  return `
+    <div class="gauge" role="img" aria-label="Echo time ${rt.toFixed(2)} seconds, target ${target.toFixed(2)}">
+      <div class="zone" style="left:${pct(target * 0.8)};width:calc(${pct(target * 1.2)} - ${pct(target * 0.8)})"></div>
+      <div class="dot" style="left:${pct(rt)}"></div>
+    </div>
+    <div class="gauge-labels"><span>Dry</span><span>Echoey</span></div>`;
+}
+
+function rtChart(bands, target) {
+  const W = 320, H = 150, pad = { l: 30, r: 8, t: 10, b: 30 };
+  const vals = bands.map((b) => b.rt_s ?? 0);
+  const max = Math.max(target * 1.5, ...vals) * 1.1;
+  const y = (s) => pad.t + (H - pad.t - pad.b) * (1 - s / max);
+  const bw = (W - pad.l - pad.r) / bands.length;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent");
+
+  const ticks = [0, max / 2, max].map((s) =>
+    `<text x="${pad.l - 6}" y="${y(s) + 4}" text-anchor="end">${s.toFixed(1)}</text>`).join("");
+  const zone = `<rect x="${pad.l}" y="${y(target * 1.2)}" width="${W - pad.l - pad.r}"
+    height="${y(target * 0.8) - y(target * 1.2)}" fill="#2f9e44" opacity=".18" rx="4"/>`;
+  const bars = bands.map((b, i) => {
+    const x = pad.l + i * bw + bw * 0.18;
+    const unsure = b.band_hz < 250;       // one clap is unreliable this low
+    const label = `<text x="${x + bw * 0.32}" y="${H - 12}" text-anchor="middle">${b.band_hz >= 1000 ? b.band_hz / 1000 + "k" : b.band_hz}</text>
+      <text x="${x + bw * 0.32}" y="${H}" text-anchor="middle">${BAND_LABELS[b.band_hz] ?? ""}</text>`;
+    if (!b.rt_s) return label;
+    return `<rect x="${x}" y="${y(b.rt_s)}" width="${bw * 0.64}" height="${y(0) - y(b.rt_s)}"
+      rx="4" fill="${accent}" opacity="${unsure ? 0.4 : 1}"><title>${b.band_hz} Hz: ${b.rt_s.toFixed(2)} s</title></rect>${label}`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Echo time per frequency band">${ticks}${zone}${bars}</svg>
+    <p class="sub small">Seconds. Faded bars are less certain from a single clap.</p>`;
 }
 
 $("btn-restart").addEventListener("click", () => {
   Object.assign(state, { goal: null, scanned: null, clap: null, notes: "",
-    answers: { floor: null, walls: null, ceiling: null, windows: null } });
+    answers: { floor: null, walls: null, ceiling: null, furnishing: null, windows: null } });
   document.querySelectorAll('[aria-pressed="true"]').forEach((x) => x.setAttribute("aria-pressed", false));
   document.querySelectorAll('[aria-checked="true"]').forEach((x) => x.setAttribute("aria-checked", false));
   $("goal-next").disabled = true;
