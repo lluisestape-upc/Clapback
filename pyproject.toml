@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clapback"
+version = "0.1.0"
+description = "Clap once in a room; get RT60, modes, clarity maps and a treatment plan."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Lluís Estapé" }]
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "soundfile>=0.12",
+  "pydantic>=2.6",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "python-multipart>=0.0.9",
+  "openai>=1.30",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.setuptools]
+packages = ["clapback", "clapback.acoustics", "clapback.agents", "clapback.llm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

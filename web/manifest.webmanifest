@@ -1,0 +1,13 @@
+{
+  "name": "Clapback",
+  "short_name": "Clapback",
+  "description": "Clap once. Hear why your room sounds the way it does.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#151515",
+  "theme_color": "#d9480f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

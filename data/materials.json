@@ -1,0 +1,23 @@
+{
+  "bands_hz": [125, 250, 500, 1000, 2000, 4000],
+  "source": "Typical published values of the kind found in standard absorption tables (e.g. Long, Architectural Acoustics; Everest, Master Handbook of Acoustics). Starting points only: check each row against a primary source before relying on it, and prefer manufacturer data for products.",
+  "materials": [
+    { "id": "plaster_on_masonry", "name": "Smooth plaster on brick/concrete", "alpha": [0.01, 0.02, 0.02, 0.03, 0.04, 0.05] },
+    { "id": "concrete_painted", "name": "Painted concrete", "alpha": [0.01, 0.01, 0.01, 0.02, 0.02, 0.02] },
+    { "id": "brick_unglazed", "name": "Unglazed brick", "alpha": [0.03, 0.03, 0.03, 0.04, 0.05, 0.07] },
+    { "id": "gypsum_board_on_studs", "name": "Gypsum board on studs (12.5 mm)", "alpha": [0.29, 0.10, 0.05, 0.04, 0.07, 0.09] },
+    { "id": "glass_window", "name": "Ordinary window glass", "alpha": [0.35, 0.25, 0.18, 0.12, 0.07, 0.04] },
+    { "id": "glass_heavy", "name": "Heavy plate glass", "alpha": [0.18, 0.06, 0.04, 0.03, 0.02, 0.02] },
+    { "id": "wood_floor_on_joists", "name": "Wood floor on joists", "alpha": [0.15, 0.11, 0.10, 0.07, 0.06, 0.07] },
+    { "id": "vinyl_on_concrete", "name": "Vinyl / tile on concrete", "alpha": [0.02, 0.03, 0.03, 0.03, 0.03, 0.02] },
+    { "id": "carpet_on_concrete", "name": "Heavy carpet on concrete", "alpha": [0.02, 0.06, 0.14, 0.37, 0.60, 0.65] },
+    { "id": "carpet_on_pad", "name": "Heavy carpet on foam pad", "alpha": [0.08, 0.24, 0.57, 0.69, 0.71, 0.73] },
+    { "id": "wood_panel_on_battens", "name": "Thin wood panelling on battens", "alpha": [0.28, 0.22, 0.17, 0.09, 0.10, 0.11] },
+    { "id": "door_solid_wood", "name": "Solid wooden door", "alpha": [0.14, 0.10, 0.06, 0.08, 0.10, 0.10] },
+    { "id": "curtain_light", "name": "Light curtain, hung flat", "alpha": [0.03, 0.04, 0.11, 0.17, 0.24, 0.35] },
+    { "id": "curtain_heavy_draped", "name": "Heavy velour curtain, draped", "alpha": [0.14, 0.35, 0.55, 0.72, 0.70, 0.65] },
+    { "id": "acoustic_ceiling_tile", "name": "Suspended mineral-fibre ceiling tile", "alpha": [0.70, 0.66, 0.72, 0.92, 0.88, 0.75] },
+    { "id": "porous_panel_50mm", "name": "50 mm mineral-wool / fibreglass panel on wall", "alpha": [0.20, 0.65, 0.95, 0.95, 0.95, 0.90], "notes": "treatment option; replace with a real product's data sheet" },
+    { "id": "bookshelf_filled", "name": "Filled bookshelf", "alpha": [0.30, 0.40, 0.40, 0.30, 0.30, 0.20], "notes": "rough estimate, no standard table entry" }
+  ]
+}
