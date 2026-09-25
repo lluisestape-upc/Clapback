@@ -91,3 +91,8 @@ def test_products_are_off_without_a_key(monkeypatch):
     monkeypatch.setattr(products, "load_dotenv", lambda *a, **k: None)
     products.search.cache_clear()
     assert products.for_plan(["panel_50", "rug"]) == {"panel_50": [], "rug": []}
+
+
+def test_a_sweep_needs_no_more_claps(monkeypatch):
+    monkeypatch.setattr(nemotron, "chat_json", lambda *a, **kw: pytest.fail("no model call needed"))
+    assert planner.run({"claps": 1, "sweeps": 1}).action == "done"

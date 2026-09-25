@@ -152,3 +152,48 @@ def test_model_calls_are_rate_limited(tmp_path, monkeypatch):
     body = {"room": ROOM, "claps": [d]}
     codes = [client.post("/api/analyze", json=body, headers={"x-forwarded-for": "9.9.9.9"}).status_code for _ in range(3)]
     assert codes == [200, 200, 429]
+
+
+def _wav(x, fs):
+    import io
+
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, x, fs, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
+def test_sweep_upload_gives_ir_response_and_iso_values(tmp_path, monkeypatch):
+    import numpy as np
+
+    from clapback import server
+    from tests.test_sweep import record, room
+
+    monkeypatch.setattr(server, "RECORDINGS", tmp_path)
+    fs = 48000
+    rec = record(room(0.6))
+    rec *= 0.5 / np.max(np.abs(rec))        # a 16-bit WAV clips above 1.0
+    box = {"floor": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 4}, {"x": 0, "y": 4}],
+           "height": 2.6, "surfaces": [{"kind": "floor", "material": "wood_floor_on_joists"}]}
+    res = client.post("/api/sweep", files={"audio": ("s.wav", _wav(rec.astype(np.float32), fs), "audio/wav")},
+                      data={"room": __import__("json").dumps(box), "goal": "music"})
+    assert res.status_code == 200, res.text
+    out = res.json()
+    assert out["kind"] == "sweep"
+    assert abs(out["rt_mid_s"] - 0.6) < 0.06
+    assert out["detail"]["response"]["f_hz"] and out["detail"]["ir_wav"]
+    assert out["bands"][3]["c50_db"] is not None
+    assert out["modes"][0]["kind"] == "axial"
+
+
+def test_sweep_without_a_sweep_is_422(tmp_path, monkeypatch):
+    import numpy as np
+
+    from clapback import server
+
+    monkeypatch.setattr(server, "RECORDINGS", tmp_path)
+    noise = (np.random.default_rng(0).standard_normal(48000 * 8) * 0.01).astype(np.float32)
+    res = client.post("/api/sweep", files={"audio": ("s.wav", _wav(noise, 48000), "audio/wav")})
+    assert res.status_code == 422
+    assert "sweep" in res.json()["detail"]

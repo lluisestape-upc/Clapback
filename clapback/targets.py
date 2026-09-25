@@ -36,22 +36,32 @@ def target_rt(goal: str, volume_m3: float) -> float:
             return 0.5
 
 
+SOURCES = {
+    "study": "DIN 18041, group A3",
+    "music": "DIN 18041, group A1",
+    "studio": "EBU Tech 3276",
+    "voice": "common practice for voice rooms",
+    "cinema": "common practice for home cinema",
+}
+
+
 def verdict(goal: str, volume_m3: float, rt_mid: float | None) -> dict:
     target = target_rt(goal, volume_m3)
+    lo, hi = target * (1 - TOLERANCE), target * (1 + TOLERANCE)
+    out = {"target_s": round(target, 2), "range_s": [round(lo, 2), round(hi, 2)],
+           "source": SOURCES.get(goal, "a comfortable furnished room")}
     if rt_mid is None:
-        return {"level": "unknown", "target_s": round(target, 2), "headline": "Couldn't measure the echo",
-                "detail": "The clap wasn't clear enough above the background noise. Try again in silence."}
+        return {**out, "level": "unknown", "headline": "No reliable measurement",
+                "detail": "The clap didn't rise far enough above the background noise. Repeat it in silence."}
     ratio = rt_mid / target
+    off = abs(ratio - 1) * 100
     if ratio > 1 + TOLERANCE:
-        level, headline = "too_live", "Too echoey"
-        detail = (f"Sound hangs around for {rt_mid:.2f} s; for this use about {target:.2f} s is ideal. "
-                  "Soft, absorbent things will help most.")
+        level, headline = "too_live", "Too reverberant"
+        detail = f"{off:.0f} % above the target. Adding absorption will bring it down."
     elif ratio < 1 - TOLERANCE:
-        level, headline = "too_dead", "Very dry"
-        detail = (f"Sound dies in {rt_mid:.2f} s, quicker than the {target:.2f} s that suits this use. "
-                  "It may feel flat; don't add more absorption.")
+        level, headline = "too_dead", "Too dry"
+        detail = f"{off:.0f} % below the target. More absorption would make it worse."
     else:
-        level, headline = "good", "About right"
-        detail = f"{rt_mid:.2f} s against a target of {target:.2f} s. Nice."
-    return {"level": level, "target_s": round(target, 2), "ratio": round(ratio, 2),
-            "headline": headline, "detail": detail}
+        level, headline = "good", "Within target"
+        detail = "Reverberation suits this use; no extra absorption needed."
+    return {**out, "level": level, "ratio": round(ratio, 2), "headline": headline, "detail": detail}

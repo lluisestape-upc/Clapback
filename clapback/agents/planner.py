@@ -45,6 +45,9 @@ listening spot. Plain words, friendly, no jargon."""
 
 def run(report: dict) -> NextStep:
     n = report.get("claps", 0)
+    if report.get("sweeps"):
+        return NextStep(action="done", instruction="",
+                        reason="A sweep already measures every band with a wide decay range.")
     if n >= MAX_CLAPS:
         return NextStep(action="done", instruction="That's plenty of claps.",
                         reason=f"{n} claps is enough for a solid average.")

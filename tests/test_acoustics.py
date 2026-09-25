@@ -32,6 +32,33 @@ def test_noisy_clap_drops_t30_but_keeps_t20():
     assert b.t20_s == pytest.approx(0.6, rel=0.10)
 
 
+@pytest.mark.parametrize("rt", [0.4, 0.8])
+def test_clarity_matches_an_exponential_decay(rt):
+    # for a pure exponential decay the energy left after t is exp(-13.8 t / T)
+    x, fs = synthetic_clap(rt)
+    late = lambda ms: np.exp(-6 * np.log(10) * ms / 1000 / rt)  # noqa: E731
+    # single bands of random noise scatter by about 1 dB (the JND for C80),
+    # so compare the mean over 500 Hz to 4 kHz
+    bands = [b for b in decay.analyze(x, fs) if b.band_hz >= 500]
+    mean = lambda k: np.mean([getattr(b, k) for b in bands])  # noqa: E731
+    assert mean("c50_db") == pytest.approx(10 * np.log10((1 - late(50)) / late(50)), abs=1.0)
+    assert mean("c80_db") == pytest.approx(10 * np.log10((1 - late(80)) / late(80)), abs=1.0)
+    assert mean("d50") == pytest.approx(1 - late(50), abs=0.05)
+
+
+def test_plot_data_is_consistent():
+    x, fs = synthetic_clap(0.6)
+    bands, detail = decay.analyze_full(x, fs)
+    for b in bands:
+        curve = detail["edc"]["db"][str(b.band_hz)]
+        assert curve[0] > -3 and curve[-1] < curve[0]
+    spec = detail["spectrogram"]
+    assert len(spec["level"][0]) == len(spec["f_hz"])
+    assert all(0 <= v <= 255 for row in spec["level"] for v in row)
+    etc = detail["etc"]
+    assert etc["t0_s"] < 0 and max(etc["db"]) == 0
+
+
 def test_no_clap_gives_no_rt():
     rng = np.random.default_rng(1)
     x = rng.standard_normal(48000 * 3) * 1e-3

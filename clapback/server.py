@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import materials, products, targets
-from .acoustics import decay, maps, modes, reverb, treat
+from .acoustics import decay, maps, modes, reverb, sweep, treat
 from .agents import intake, optimizer, planner
 from .room import Room
 
@@ -72,6 +72,62 @@ RECORDINGS = Path(
     or ("/tmp/recordings" if os.environ.get("VERCEL") else Path(__file__).resolve().parent.parent / "recordings")
 )
 MAX_CLAP_SECONDS = 15
+MAX_SWEEP_SECONDS = 25
+
+
+def _read_audio(data: bytes, max_seconds: float) -> tuple[np.ndarray, int]:
+    try:
+        x, fs = sf.read(io.BytesIO(data), dtype="float32")
+    except Exception as e:  # noqa: BLE001 - any decode failure is a bad upload
+        raise HTTPException(422, f"could not read audio: {e}") from e
+    if x.ndim > 1:
+        x = x.mean(axis=1)
+    if len(x) > max_seconds * fs:
+        raise HTTPException(413, f"recordings longer than {max_seconds} s aren't measurements")
+    return x, fs
+
+
+def _save(kind: str, x: np.ndarray, fs: int, meta: dict) -> str:
+    """Best-effort copy of the recording and its context, for validating the engine."""
+    name = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    try:
+        RECORDINGS.mkdir(parents=True, exist_ok=True)
+        sf.write(RECORDINGS / f"{name}.wav", x, fs, subtype="FLOAT")
+        (RECORDINGS / f"{name}.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    except OSError as e:
+        log.warning("could not save %s: %s", kind, e)
+    return name
+
+
+def _meta(room: str, goal: str, notes: str, mic: str, **extra) -> dict:
+    try:
+        return {"room": json.loads(room or "{}"), "goal": goal, "notes": notes,
+                "mic": json.loads(mic or "{}"), **extra}
+    except ValueError:
+        raise HTTPException(422, "room and mic must be JSON") from None
+
+
+def _room_or_none(room: str) -> Room | None:
+    try:
+        return Room.model_validate_json(room) if room and room != "{}" else None
+    except ValueError:
+        return None
+
+
+def _measurement(name: str, kind: str, x: np.ndarray, fs: int, bands, detail: dict,
+                 room: str, goal: str) -> dict:
+    peak = float(np.max(np.abs(x))) if x.size else 0.0
+    out = {
+        "id": name,
+        "kind": kind,
+        "sample_rate": fs,
+        "seconds": round(len(x) / fs, 3),
+        "peak_dbfs": round(20 * np.log10(peak + 1e-12), 1),
+        "decay": [BandIn(**b.to_dict()).model_dump() for b in bands],
+        "detail": detail,
+    }
+    out.update(combine([bands], _room_or_none(room), goal))
+    return out
 
 
 @app.post("/api/clap")
@@ -82,54 +138,42 @@ async def upload_clap(
     notes: str = Form(""),
     mic: str = Form("{}"),
 ) -> dict:
-    """Save a clap recording with its context and analyse it.
+    """Analyse one clap recording. The app keeps the per-band results and
+    sends them back to /api/analyze, so the server stays stateless."""
+    x, fs = _read_audio(await audio.read(), MAX_CLAP_SECONDS)
+    name = _save("clap", x, fs, _meta(room, goal, notes, mic))
+    bands, detail = decay.analyze_full(x, fs)
+    return _measurement(name, "clap", x, fs, bands, detail, room, goal)
 
-    Every clap from the phone lands in recordings/ with a JSON sidecar, which
-    is also how the reference claps for validating decay.py get collected.
-    """
-    data = await audio.read()
+
+@app.post("/api/sweep")
+async def upload_sweep(
+    audio: UploadFile,
+    room: str = Form("{}"),
+    goal: str = Form(""),
+    notes: str = Form(""),
+    mic: str = Form("{}"),
+    f1: float = Form(sweep.F1_HZ),
+    f2: float = Form(sweep.F2_HZ),
+    seconds: float = Form(sweep.SECONDS),
+) -> dict:
+    """Recording of the test sweep → impulse response → the same analysis
+    as a clap, plus the frequency response and the IR as a WAV."""
+    x, fs = _read_audio(await audio.read(), MAX_SWEEP_SECONDS)
+    if not (20 <= f1 < f2 <= fs / 2 and 1 <= seconds <= 15):
+        raise HTTPException(422, "bad sweep parameters")
+    name = _save("sweep", x, fs, _meta(room, goal, notes, mic, f1=f1, f2=f2, seconds=seconds))
     try:
-        x, fs = sf.read(io.BytesIO(data), dtype="float32")
-    except Exception as e:  # noqa: BLE001 - any decode failure is a bad upload
-        raise HTTPException(422, f"could not read audio: {e}") from e
-    if x.ndim > 1:
-        x = x.mean(axis=1)
-    if len(x) > MAX_CLAP_SECONDS * fs:
-        raise HTTPException(413, f"recordings longer than {MAX_CLAP_SECONDS} s aren't claps")
-
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    try:
-        RECORDINGS.mkdir(parents=True, exist_ok=True)
-        sf.write(RECORDINGS / f"clap-{stamp}.wav", x, fs, subtype="FLOAT")
-        (RECORDINGS / f"clap-{stamp}.json").write_text(
-            json.dumps(
-                {"room": json.loads(room or "{}"), "goal": goal, "notes": notes, "mic": json.loads(mic or "{}")},
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-    except OSError as e:
-        log.warning("could not save clap: %s", e)
-    peak = float(np.max(np.abs(x))) if x.size else 0.0
-    bands = decay.analyze(x, fs)
-    out = {
-        "id": f"clap-{stamp}",
-        "sample_rate": fs,
-        "seconds": round(len(x) / fs, 3),
-        "peak_dbfs": round(20 * np.log10(peak + 1e-12), 1),
-    }
-    try:
-        room_model = Room.model_validate_json(room) if room and room != "{}" else None
-    except ValueError:
-        room_model = None
-    out["decay"] = [BandIn(**b.to_dict()).model_dump() for b in bands]
-    out.update(combine([bands], room_model, goal))
-    return out
-
-
-def analyze(x: np.ndarray, fs: int, room: Room | None, goal: str) -> dict:
-    """Everything the results screen shows, from one clap."""
-    return combine([decay.analyze(x, fs)], room, goal)
+        ir, info = sweep.deconvolve(x, fs, f1, f2, seconds)
+    except sweep.NoSweep as e:
+        raise HTTPException(422, str(e)) from None
+    bands, detail = decay.analyze_full(ir, fs)
+    detail["response"] = sweep.response(ir, fs, f1, f2)
+    detail["ir_wav"] = sweep.wav_base64(ir, fs)
+    detail["sweep"] = info
+    if np.max(np.abs(x)) >= 0.999:
+        detail["warning"] = "The mic was overloaded. Turn the speaker down a little and measure again."
+    return _measurement(name, "sweep", x, fs, bands, detail, room, goal)
 
 
 class BandIn(BaseModel):
@@ -139,20 +183,38 @@ class BandIn(BaseModel):
     t20_s: float | None = Field(None, gt=0, le=20)
     t30_s: float | None = Field(None, gt=0, le=20)
     dynamic_range_db: float = 0.0
+    c50_db: float | None = Field(None, ge=-40, le=40)
+    c80_db: float | None = Field(None, ge=-40, le=40)
+    d50: float | None = Field(None, ge=0, le=1)
 
     def to_decay(self) -> decay.BandDecay:
         return decay.BandDecay(**self.model_dump())
 
 
+ISO_FIELDS = ("edt_s", "t20_s", "t30_s", "c50_db", "c80_db", "d50")
+
+
+def _mean(v: list[float]) -> float | None:
+    return sum(v) / len(v) if v else None
+
+
 def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) -> dict:
-    """Average several claps per band (valid values only) and build the report."""
+    """Average several measurements per band (valid values only) and build the report."""
     bands_hz = [b.band_hz for b in claps[0]] if claps else []
-    per_band = {f: [b.rt_s for c in claps for b in c if b.band_hz == f and b.rt_s] for f in bands_hz}
-    rt = {f: (sum(v) / len(v) if v else None) for f, v in per_band.items()}
+    rows, rt = [], {}
+    for f in bands_hz:
+        items = [b for c in claps for b in c if b.band_hz == f]
+        rts = [b.rt_s for b in items if b.rt_s]
+        rt[f] = _mean(rts)
+        row = {"band_hz": f, "rt_s": rt[f], "n": len(rts)}
+        for k in ISO_FIELDS:
+            v = _mean([getattr(b, k) for b in items if getattr(b, k) is not None])
+            row[k] = round(v, 3) if v is not None else None
+        rows.append(row)
     mids = [rt.get(f) for f in (500, 1000) if rt.get(f)]
     rt_mid = sum(mids) / len(mids) if mids else None
 
-    # spread of the per-clap mid RT, for the planner
+    # spread of the per-measurement mid RT, for the planner
     clap_mids = []
     for c in claps:
         m = [b.rt_s for b in c if b.band_hz in (500, 1000) and b.rt_s]
@@ -162,7 +224,7 @@ def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) ->
 
     out: dict = {
         "claps": len(claps),
-        "bands": [{"band_hz": f, "rt_s": rt[f], "n": len(per_band[f])} for f in bands_hz],
+        "bands": rows,
         "rt_mid_s": rt_mid,
         "clap_mids_s": [round(m, 3) for m in clap_mids],
         "mid_spread_pct": round(spread, 1) if spread is not None else None,
@@ -179,8 +241,10 @@ def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) ->
         xs = [p.x for p in room.floor]
         ys = [p.y for p in room.floor]
         lx, ly = max(xs) - min(xs), max(ys) - min(ys)
-        ms = modes.room_modes(lx, ly, room.height, f_max=200)
-        out["bass_notes"] = modes.problem_frequencies(ms, below_hz=out.get("schroeder_hz", 200))
+        ms = modes.room_modes(lx, ly, room.height, f_max=300)
+        out["bass_notes"] = modes.problem_frequencies(
+            [m for m in ms if m.freq_hz <= 200], below_hz=out.get("schroeder_hz", 200))
+        out["modes"] = [{"freq_hz": round(m.freq_hz, 1), "kind": m.kind, "n": list(m.n)} for m in ms]
     if room.surfaces:
         out["model"] = reverb.calibrate(room, [rt.get(f) for f in reverb.OCTAVE_BANDS_HZ])
     if rt_mid:
@@ -193,6 +257,7 @@ class AnalyzeRequest(BaseModel):
     goal: str = Field("", max_length=32)
     notes: str = Field("", max_length=600)
     claps: list[list[BandIn]] = Field(min_length=1, max_length=6)
+    kinds: list[str] = Field(default_factory=list, max_length=6)  # "clap" / "sweep", same order
 
 
 class PlanRequest(AnalyzeRequest):
@@ -245,6 +310,7 @@ def analyze_session(req: AnalyzeRequest, request: Request) -> dict:
     out["understood"] = understood.model_dump()
     report = {k: out.get(k) for k in ("claps", "rt_mid_s", "clap_mids_s", "mid_spread_pct")}
     report["low_bands_usable"] = [b["band_hz"] for b in out["bands"] if b["band_hz"] <= 250 and b["rt_s"]]
+    report["sweeps"] = req.kinds.count("sweep")
     out["next"] = planner.run(report).model_dump()
     return out
 
