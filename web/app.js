@@ -2,7 +2,7 @@
 // One task per screen; every step builds the same Room JSON (clapback/room.py).
 import { openMic, recordClap, quickQuality } from "./capture.js";
 import { arSupported, startScan } from "./scan.js";
-import { showRoom } from "./room3d.js";
+import { showRoom, showGrid, showSource, modalGrid, RAMPS } from "./room3d.js";
 
 const $ = (id) => document.getElementById(id);
 const SCREENS = ["welcome", "goal", "room", "surfaces", "clap", "results"];
@@ -364,7 +364,74 @@ async function renderResults() {
   $("stats").innerHTML = stats.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join("");
 
   if (res.rt_mid_s) $("fix-card").hidden = false;
+
+  if (res.maps) {
+    showSource($("view3d"), res.maps.source);
+    if (res.bass_notes?.length) setFreq(Math.round(res.bass_notes[0].freq_hz));
+    setLayer(state.layer ?? "sti");
+  }
 }
+
+// ---------- map layers ----------
+
+function legend(name) {
+  const stops = RAMPS[name];
+  const css = stops.map(([v, c]) => {
+    const pct = ((v - stops[0][0]) / (stops.at(-1)[0] - stops[0][0])) * 100;
+    return `rgb(${c.map((x) => Math.round(x * 255)).join(",")}) ${pct}%`;
+  }).join(",");
+  const labels = name === "sti"
+    ? ["Hard to follow", "Fair", "Clear"]
+    : ["Bass hole", "Even", "Boom"];
+  return `<div class="bar" style="background:linear-gradient(90deg,${css})"></div>
+    <div class="labels">${labels.map((l) => `<span>${l}</span>`).join("")}</div>`;
+}
+
+function setLayer(name) {
+  state.layer = name;
+  const res = state.analysis;
+  if (!res?.maps) return;
+  document.querySelectorAll("[data-layer]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.layer === name));
+  $("legend").innerHTML = legend(name);
+  $("bass-ctrl").hidden = name !== "modal";
+  if (name === "sti") {
+    showGrid($("view3d"), res.maps.sti, "sti", res.maps.listener_z);
+    const s = res.maps.sti_summary;
+    $("map-help").textContent = `How easy speech is to follow at ear height, for someone talking from the orange dot. ` +
+      `From ${s.min.toFixed(2)} to ${s.max.toFixed(2)} on the 0–1 speech-transmission scale (an estimate for a quiet room).`;
+  } else {
+    drawModal();
+  }
+}
+
+function drawModal() {
+  const res = state.analysis, f = +$("freq").value;
+  const g = modalGrid(currentRoom(), f, res.maps.source, res.maps.rt_low_s || 0.5);
+  showGrid($("view3d"), g, "modal", res.maps.listener_z);
+  $("freq-out").textContent = `${f} Hz ≈ ${noteName(f)}`;
+  $("map-help").textContent = "How loud one bass note is around the room. Red spots boom, blue spots lose the note. Slide or press play to sweep.";
+}
+
+function setFreq(f) { $("freq").value = f; }
+
+document.querySelectorAll("[data-layer]").forEach((b) => b.addEventListener("click", () => setLayer(b.dataset.layer)));
+$("freq").addEventListener("input", drawModal);
+
+let sweeping = null;
+$("btn-sweep").addEventListener("click", () => {
+  if (sweeping) { cancelAnimationFrame(sweeping); sweeping = null; return; }
+  let f = 25, last = 0;
+  const step = (t) => {
+    if (t - last > 70) {           // ~14 frames per second is plenty
+      last = t;
+      setFreq(f); drawModal();
+      f += 1;
+      if (f > 160) { sweeping = null; return; }
+    }
+    sweeping = requestAnimationFrame(step);
+  };
+  sweeping = requestAnimationFrame(step);
+});
 
 // ---------- plan ----------
 

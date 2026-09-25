@@ -125,7 +125,23 @@
         <h3>What I counted from your notes</h3>
         <div class="row" id="understood"></div>
       </div>
-      <div class="result-3d" id="view3d" aria-label="3D view of the room"></div>
+      <div class="card map-card">
+        <h3>Map of your room</h3>
+        <div class="row layer-switch" role="radiogroup" aria-label="Map layer">
+          <button class="chip" data-layer="sti" aria-pressed="true">Speech clarity</button>
+          <button class="chip" data-layer="modal" aria-pressed="false">Bass</button>
+        </div>
+        <div class="result-3d" id="view3d" aria-label="3D map of the room"></div>
+        <div class="legend" id="legend"></div>
+        <div class="bass-ctrl" id="bass-ctrl" hidden>
+          <button class="icon-btn play" id="btn-sweep" aria-label="Play a bass sweep">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M7 5l12 7-12 7z" fill="currentColor"/></svg>
+          </button>
+          <input type="range" id="freq" min="25" max="200" step="1" value="50" aria-label="Bass frequency">
+          <output id="freq-out">50 Hz</output>
+        </div>
+        <p class="sub small" id="map-help"></p>
+      </div>
       <dl class="stats" id="stats"></dl>
 
       <div class="card fix" id="fix-card" hidden>

@@ -102,3 +102,36 @@ def test_implausible_fit_is_rejected():
     flat[0] = 0.0
     flat[-1] = -40.0
     assert decay.fit_rt(flat, fs, -5.0, -25.0) is None
+
+
+def test_c50_barron_by_hand():
+    from clapback.acoustics import maps
+    r, V, T = 5.0, 100.0, 1.0
+    d = 100 / r**2
+    k = 31200 * T / V * np.exp(-0.04 * r / T)
+    expected = 10 * np.log10((d + k * (1 - np.exp(-0.691))) / (k * np.exp(-0.691)))
+    assert maps.c50_barron(np.array([r]), V, T)[0] == pytest.approx(expected)
+
+
+def test_sti_gets_worse_with_distance_and_reverb():
+    from clapback.acoustics import maps
+    room = Room.box(8, 7, 3)
+    src = maps.default_source(room, "study")
+    dry = np.array(maps.sti_map(room, [0.4] * 6, src).values)
+    wet = np.array(maps.sti_map(room, [1.5] * 6, src).values)
+    assert wet.mean() < dry.mean()
+    row = dry[len(dry) // 2]
+    assert row[0] > row[-1]  # near the talker beats the back of the room
+    assert 0 <= wet.min() and dry.max() <= 1
+
+
+def test_axial_mode_has_a_null_in_the_middle():
+    from clapback.acoustics import maps
+    from clapback.room import Point3
+    room = Room.box(5, 4, 2.6)
+    f100 = 343 / (2 * 5)
+    g = maps.modal_pressure_map(room, f100, Point3(x=0.3, y=0.3, z=0.3), rt_s=0.5, step_m=0.1)
+    row = np.array(g.values)[len(g.ys) // 2]
+    xs = np.array(g.xs)
+    assert abs(xs[np.argmin(row)] - 2.5) < 0.3
+    assert row.max() - row.min() > 10

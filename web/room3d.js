@@ -87,4 +87,100 @@ export function showRoom(el, room) {
   v.controls.target.copy(c);
 }
 
-// TODO showGrid(el, grid, { layer: "sti" | "c50" | "modal" })
+// ---------- map layers ----------
+
+// Colour ramps. Each stop is [value, [r, g, b]] in 0..1 space.
+export const RAMPS = {
+  // IEC 60268-16 bands: <0.45 poor, 0.45-0.6 fair, 0.6-0.75 good, >0.75 excellent
+  sti: [[0.30, [0.79, 0.16, 0.16]], [0.45, [0.91, 0.35, 0.05]], [0.60, [0.98, 0.76, 0.2]], [0.75, [0.18, 0.62, 0.27]]],
+  // bass level relative to the room median, dB: blue = quiet spot, red = boom
+  modal: [[-12, [0.11, 0.49, 0.84]], [0, [0.85, 0.83, 0.8]], [12, [0.91, 0.35, 0.05]]],
+};
+
+function ramp(stops, v) {
+  if (v <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) {
+    const [v1, c1] = stops[i];
+    if (v <= v1) {
+      const [v0, c0] = stops[i - 1];
+      const t = (v - v0) / (v1 - v0);
+      return c0.map((c, k) => c + (c1[k] - c) * t);
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+// grid: {xs, ys, values[j][i]} in room coords; drawn at height z.
+export function showGrid(el, grid, rampName, z = 1.2) {
+  const v = views.get(el);
+  if (!v) return;
+  if (v.layer) { v.scene.remove(v.layer); v.layer.geometry.dispose(); }
+  const nx = grid.xs.length, ny = grid.ys.length;
+  const w = grid.xs[nx - 1] - grid.xs[0], h = grid.ys[ny - 1] - grid.ys[0];
+  const geo = new THREE.PlaneGeometry(w, h, nx - 1, ny - 1);
+  const colors = new Float32Array(nx * ny * 3);
+  // PlaneGeometry vertices run row by row from top-left (+y) to bottom-right.
+  for (let r = 0; r < ny; r++) {
+    for (let c = 0; c < nx; c++) {
+      const j = ny - 1 - r;
+      const col = ramp(RAMPS[rampName], grid.values[j][c]);
+      colors.set(col, (r * nx + c) * 3);
+    }
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geo.rotateX(-Math.PI / 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.92,
+  }));
+  mesh.position.set(grid.xs[0] + w / 2, z, -(grid.ys[0] + h / 2));
+  v.scene.add(mesh);
+  v.layer = mesh;
+}
+
+export function showSource(el, src) {
+  const v = views.get(el);
+  if (!v) return;
+  if (v.source) v.scene.remove(v.source);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.14, 20, 14), new THREE.MeshBasicMaterial({ color: accent() }));
+  m.position.set(src.x, src.z, -src.y);
+  v.scene.add(m);
+  v.source = m;
+}
+
+// Same modal sum as clapback/acoustics/maps.py modal_pressure_map (the tested
+// reference); duplicated here so a frequency sweep can animate at 60 fps.
+export function modalGrid(room, freq, src, rt = 0.5, step = 0.25, z = 1.2) {
+  const xsR = room.floor.map((p) => p.x), ysR = room.floor.map((p) => p.y);
+  const x0 = Math.min(...xsR), y0 = Math.min(...ysR);
+  const lx = Math.max(...xsR) - x0, ly = Math.max(...ysR) - y0, lz = room.height;
+  const c = 343, fMax = Math.max(2 * freq, 60), w = 2 * Math.PI * freq, delta = 6.91 / rt;
+  const xs = [], ys = [];
+  for (let x = x0 + step / 2; x < x0 + lx; x += step) xs.push(x);
+  for (let y = y0 + step / 2; y < y0 + ly; y += step) ys.push(y);
+
+  const modes = [[0, 0, 0, 0]];
+  const N = (L) => Math.floor((2 * fMax * L) / c) + 1;
+  for (let a = 0; a <= N(lx); a++) for (let b = 0; b <= N(ly); b++) for (let d = 0; d <= N(lz); d++) {
+    if (!a && !b && !d) continue;
+    const f = (c / 2) * Math.hypot(a / lx, b / ly, d / lz);
+    if (f <= fMax) modes.push([a, b, d, f]);
+  }
+  const re = ys.map(() => new Float64Array(xs.length)), im = ys.map(() => new Float64Array(xs.length));
+  for (const [a, b, d, f] of modes) {
+    const wn = 2 * Math.PI * f;
+    const lam = (a ? 0.5 : 1) * (b ? 0.5 : 1) * (d ? 0.5 : 1);
+    const ps = Math.cos(a * Math.PI * (src.x - x0) / lx) * Math.cos(b * Math.PI * (src.y - y0) / ly) * Math.cos(d * Math.PI * src.z / lz);
+    const pz = Math.cos(d * Math.PI * z / lz);
+    // 1 / (lam (wn² - w² + 2jδw))
+    const dr = lam * (wn * wn - w * w), di = lam * 2 * delta * w, den = dr * dr + di * di;
+    const cr = dr / den, ci = -di / den;
+    const cx = xs.map((x) => Math.cos(a * Math.PI * (x - x0) / lx));
+    ys.forEach((y, j) => {
+      const k = ps * pz * Math.cos(b * Math.PI * (y - y0) / ly);
+      for (let i = 0; i < xs.length; i++) { re[j][i] += k * cx[i] * cr; im[j][i] += k * cx[i] * ci; }
+    });
+  }
+  const db = re.map((row, j) => Array.from(row, (r, i) => 20 * Math.log10(Math.hypot(r, im[j][i]) + 1e-12)));
+  const flat = db.flat().sort((p, q) => p - q), med = flat[Math.floor(flat.length / 2)];
+  return { xs, ys, values: db.map((row) => row.map((v) => v - med)), unit: "dB" };
+}

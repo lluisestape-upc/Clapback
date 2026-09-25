@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import materials, targets
-from .acoustics import decay, modes, reverb, treat
+from .acoustics import decay, maps, modes, reverb, treat
 from .agents import intake, optimizer, planner
 from .room import Room
 
@@ -156,6 +156,8 @@ def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) ->
         out["bass_notes"] = modes.problem_frequencies(ms, below_hz=out.get("schroeder_hz", 200))
     if room.surfaces:
         out["model"] = reverb.calibrate(room, [rt.get(f) for f in reverb.OCTAVE_BANDS_HZ])
+    if rt_mid:
+        out["maps"] = maps.all_maps(room, [rt.get(f) for f in reverb.OCTAVE_BANDS_HZ], goal)
     return out
 
 

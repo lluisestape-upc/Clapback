@@ -221,3 +221,14 @@ details.trace ol { padding-left: 20px; }
 details.trace li { margin: 6px 0; }
 .chip.static { cursor: default; }
 .chip.unknown { border-style: dashed; color: var(--muted); }
+
+/* Map */
+.map-card .layer-switch { margin: 8px 0 10px; }
+.map-card .result-3d { box-shadow: none; background: var(--bg); }
+.legend { margin: 10px 0 4px; }
+.legend .bar { height: 10px; border-radius: 5px; }
+.legend .labels { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.bass-ctrl { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.bass-ctrl input { flex: 1; accent-color: var(--accent); }
+.bass-ctrl output { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; }
+.icon-btn.play { background: var(--accent); color: #fff; width: 40px; height: 40px; }
