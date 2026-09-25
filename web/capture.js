@@ -1,10 +1,10 @@
-// Clap capture as raw PCM → WAV.
+// Clap capture as raw PCM → WAV, with a live level for the meter and a quick
+// quality check so the user knows right away whether to clap again.
 //
 // Two things matter for decay measurement:
 //  - Browser voice processing (echo cancellation, noise suppression, AGC)
 //    must be off, or it eats the reverberant tail. Some phones ignore the
-//    request, so the settings actually applied are returned and should be
-//    checked.
+//    request, so the settings actually applied are returned and checked.
 //  - No lossy codec (MediaRecorder gives Opus), so samples are taken straight
 //    from an AudioWorklet.
 
@@ -19,8 +19,8 @@ class Tap extends AudioWorkletProcessor {
 registerProcessor("tap", Tap);
 `;
 
-export async function recordClap({ seconds = 3 } = {}) {
-  const stream = await navigator.mediaDevices.getUserMedia({
+export async function openMic() {
+  return navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: false,
       noiseSuppression: false,
@@ -28,6 +28,10 @@ export async function recordClap({ seconds = 3 } = {}) {
       channelCount: 1,
     },
   });
+}
+
+// onLevel(0..1) is called per audio block while recording.
+export async function recordClap(stream, { seconds = 5, onLevel = () => {} } = {}) {
   const track = stream.getAudioTracks()[0];
   const ctx = new AudioContext();
   const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
@@ -36,13 +40,20 @@ export async function recordClap({ seconds = 3 } = {}) {
   const src = ctx.createMediaStreamSource(stream);
   const tap = new AudioWorkletNode(ctx, "tap");
   const chunks = [];
-  tap.port.onmessage = (e) => chunks.push(e.data);
+  tap.port.onmessage = (e) => {
+    const c = e.data;
+    chunks.push(c);
+    let peak = 0;
+    for (let i = 0; i < c.length; i++) peak = Math.max(peak, Math.abs(c[i]));
+    // map -60..0 dBFS to 0..1 for the meter
+    const db = 20 * Math.log10(peak + 1e-9);
+    onLevel(Math.min(1, Math.max(0, (db + 60) / 60)));
+  };
   src.connect(tap);
 
   await new Promise((r) => setTimeout(r, seconds * 1000));
 
   src.disconnect();
-  track.stop();
   const settings = { ...track.getSettings(), sampleRate: ctx.sampleRate };
   await ctx.close();
 
@@ -51,7 +62,32 @@ export async function recordClap({ seconds = 3 } = {}) {
   let o = 0;
   for (const c of chunks) { pcm.set(c, o); o += c.length; }
 
-  return { blob: toWav(pcm, settings.sampleRate), settings };
+  return { pcm, settings, blob: toWav(pcm, settings.sampleRate) };
+}
+
+// Rough, fast check for coaching only. The real analysis happens on the server.
+// Uses 10 ms RMS frames: loudest frame vs the quietest 20 % (background noise).
+export function quickQuality(pcm, fs) {
+  const hop = Math.round(fs * 0.01);
+  const frames = [];
+  let peak = 0;
+  for (let i = 0; i + hop <= pcm.length; i += hop) {
+    let s = 0;
+    for (let j = i; j < i + hop; j++) { s += pcm[j] * pcm[j]; peak = Math.max(peak, Math.abs(pcm[j])); }
+    frames.push(10 * Math.log10(s / hop + 1e-12));
+  }
+  const sorted = [...frames].sort((a, b) => a - b);
+  const noise = sorted[Math.floor(sorted.length * 0.2)];
+  const loud = sorted[sorted.length - 1];
+  const range = loud - noise;
+  const clipped = peak >= 0.999;
+
+  let level, message;
+  if (clipped) { level = "warn"; message = "Too loud for the mic. Hold the phone a bit further away and clap again."; }
+  else if (range < 20) { level = "bad"; message = "I couldn't hear a clear clap. Try a sharper, louder clap."; }
+  else if (range < 35) { level = "warn"; message = "Usable, but a bit quiet or noisy. A louder clap in silence will be more accurate."; }
+  else { level = "good"; message = "Great clap. That's all I need."; }
+  return { level, message, rangeDb: range, peakDb: 20 * Math.log10(peak + 1e-9) };
 }
 
 // 32-bit float WAV, mono.

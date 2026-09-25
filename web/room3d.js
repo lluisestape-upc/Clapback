@@ -8,53 +8,83 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-let renderer, scene, camera, controls, roomGroup;
+const views = new Map(); // container element → view
 
-function init(el) {
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(devicePixelRatio);
+function makeView(el) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   el.appendChild(renderer.domElement);
-  scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 100);
-  controls = new OrbitControls(camera, renderer.domElement);
-  scene.add(new THREE.AmbientLight(0xffffff, 1));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.enablePan = false;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 1.2;
+  controls.addEventListener("start", () => { controls.autoRotate = false; });
 
   const resize = () => {
     const w = el.clientWidth, h = el.clientHeight;
+    if (!w || !h) return;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };
   new ResizeObserver(resize).observe(el);
   resize();
-  renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+  renderer.setAnimationLoop(() => {
+    if (!el.offsetParent) return; // hidden screen: skip rendering
+    controls.update();
+    renderer.render(scene, camera);
+  });
+  return { renderer, scene, camera, controls, group: null, framed: false };
 }
+
+const accent = () =>
+  getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#d9480f";
 
 // Room coords are z-up; three.js is y-up. Room (x, y, z) → three (x, z, -y).
 export function showRoom(el, room) {
-  if (!renderer) init(el);
-  if (roomGroup) scene.remove(roomGroup);
-  roomGroup = new THREE.Group();
+  let v = views.get(el);
+  if (!v) { v = makeView(el); views.set(el, v); }
+  if (v.group) v.scene.remove(v.group);
+  const g = new THREE.Group();
 
   const shape = new THREE.Shape(room.floor.map((p) => new THREE.Vector2(p.x, p.y)));
-  const walls = new THREE.ExtrudeGeometry(shape, { depth: room.height, bevelEnabled: false });
-  walls.rotateX(-Math.PI / 2);
-  roomGroup.add(new THREE.LineSegments(
-    new THREE.EdgesGeometry(walls),
-    new THREE.LineBasicMaterial({ color: 0xd9480f }),
+  const solid = new THREE.ExtrudeGeometry(shape, { depth: room.height, bevelEnabled: false });
+  solid.rotateX(-Math.PI / 2);
+  g.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(solid),
+    new THREE.LineBasicMaterial({ color: accent() }),
   ));
+  g.add(new THREE.Mesh(solid, new THREE.MeshBasicMaterial({
+    color: accent(), transparent: true, opacity: 0.06, side: THREE.BackSide, depthWrite: false,
+  })));
+
   const floor = new THREE.ShapeGeometry(shape);
   floor.rotateX(-Math.PI / 2);
-  roomGroup.add(new THREE.Mesh(floor, new THREE.MeshBasicMaterial({
-    color: 0x888888, transparent: true, opacity: 0.25, side: THREE.DoubleSide,
+  g.add(new THREE.Mesh(floor, new THREE.MeshBasicMaterial({
+    color: 0x9a948b, transparent: true, opacity: 0.22, side: THREE.DoubleSide,
   })));
-  scene.add(roomGroup);
 
-  const box = new THREE.Box3().setFromObject(roomGroup);
+  // A person for scale (1.7 m)
+  const person = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.18, 1.34, 4, 12),
+    new THREE.MeshBasicMaterial({ color: 0x6b665e, transparent: true, opacity: 0.6 }),
+  );
+  const box0 = new THREE.Box3().setFromObject(g);
+  const c0 = box0.getCenter(new THREE.Vector3());
+  person.position.set(c0.x, 0.85, c0.z);
+  g.add(person);
+
+  v.scene.add(g);
+  v.group = g;
+
+  const box = new THREE.Box3().setFromObject(g);
   const c = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3()).length();
-  camera.position.set(c.x + size * 0.8, c.y + size * 0.7, c.z + size * 0.8);
-  controls.target.copy(c);
+  v.camera.position.set(c.x + size * 0.95, c.y + size * 0.7, c.z + size * 0.95);
+  v.controls.target.copy(c);
 }
 
-// TODO showGrid(grid, { layer: "sti" | "c50" | "modal" })
+// TODO showGrid(el, grid, { layer: "sti" | "c50" | "modal" })

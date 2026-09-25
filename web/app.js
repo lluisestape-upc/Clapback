@@ -1,60 +1,324 @@
-// Wires the three steps together. Each step lives in its own module.
-import { recordClap } from "./capture.js";
+// Step-by-step flow: welcome → goal → size → surfaces → clap → results.
+// One task per screen; every step builds the same Room JSON (clapback/room.py).
+import { openMic, recordClap, quickQuality } from "./capture.js";
 import { arSupported, startScan } from "./scan.js";
 import { showRoom } from "./room3d.js";
 
 const $ = (id) => document.getElementById(id);
-let room = null;
+const SCREENS = ["welcome", "goal", "room", "surfaces", "clap", "results"];
 
-// 1. Room: typed dimensions (MVP) or AR scan (same Room JSON either way)
-function boxRoom(length, width, height) {
-  return {
-    name: "typed",
-    height,
-    floor: [
-      { x: 0, y: 0 }, { x: length, y: 0 },
-      { x: length, y: width }, { x: 0, y: width },
-    ],
-    surfaces: [],
-  };
+const state = {
+  step: 0,
+  goal: null,
+  dims: { length: 5.0, width: 4.0, height: 2.6 },
+  scanned: null,           // Room from the AR scan, if used
+  answers: { floor: null, walls: null, ceiling: null, windows: null },
+  notes: "",
+  clap: null,              // { quality, upload }
+};
+
+// ---------- navigation ----------
+
+function renderSteps() {
+  $("steps").innerHTML = SCREENS.slice(1).map((_, i) => {
+    const k = i + 1;
+    const cls = k < state.step ? "done" : k === state.step ? "current" : "";
+    return `<li class="${cls}"></li>`;
+  }).join("");
 }
 
-async function useRoom(r) {
-  const res = await fetch("/api/room", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(r),
+function go(step) {
+  state.step = Math.max(0, Math.min(SCREENS.length - 1, step));
+  document.querySelectorAll(".screen").forEach((s) => {
+    s.hidden = s.dataset.screen !== SCREENS[state.step];
   });
-  const out = await res.json();
-  $("room-out").textContent = JSON.stringify(out, null, 2);
-  if (res.ok) {
-    room = r;
-    showRoom($("view3d"), room);
-  }
+  $("btn-back").hidden = state.step === 0;
+  renderSteps();
+  window.scrollTo({ top: 0 });
+  onEnter[SCREENS[state.step]]?.();
 }
 
-$("form-dims").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  useRoom(boxRoom(+f.get("length"), +f.get("width"), +f.get("height")));
+document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => go(state.step + 1)));
+$("btn-back").addEventListener("click", () => go(state.step - 1));
+
+// ---------- goal ----------
+
+const ICONS = {
+  mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  note: '<path d="M9 18V5l11-2v13M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm11-2a3 3 0 1 1-3-3 3 3 0 0 1 3 3z"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>',
+  film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+};
+const GOALS = [
+  { id: "voice", icon: "mic", title: "Podcast or calls", hint: "Clear, dry voice" },
+  { id: "music", icon: "note", title: "Playing music", hint: "Some life, no mush" },
+  { id: "studio", icon: "sliders", title: "Mixing / studio", hint: "Honest, even bass" },
+  { id: "study", icon: "book", title: "Studying or teaching", hint: "Easy to understand speech" },
+  { id: "cinema", icon: "film", title: "Movies and TV", hint: "Clear dialogue, tight bass" },
+  { id: "curious", icon: "sparkle", title: "Just curious", hint: "Tell me how it sounds" },
+];
+
+$("goal-choices").innerHTML = GOALS.map((g) => `
+  <button class="choice" role="radio" aria-checked="false" data-goal="${g.id}">
+    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[g.icon]}</svg>
+    <strong>${g.title}</strong><span>${g.hint}</span>
+  </button>`).join("");
+$("goal-choices").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goal]");
+  if (!b) return;
+  state.goal = b.dataset.goal;
+  document.querySelectorAll("[data-goal]").forEach((x) => x.setAttribute("aria-checked", x === b));
+  $("goal-next").disabled = false;
 });
 
-arSupported().then((ok) => {
-  $("btn-scan").disabled = !ok;
-  $("scan-support").textContent = ok
-    ? "AR available on this device."
-    : "AR not available here (needs Chrome on an ARCore Android phone, over HTTPS).";
-});
-$("btn-scan").addEventListener("click", async () => useRoom(await startScan()));
+// ---------- room size ----------
 
-// 2. Clap
-$("btn-record").addEventListener("click", async () => {
-  const status = $("rec-status");
-  status.textContent = "Recording… clap once, then stay quiet.";
-  const { blob, settings } = await recordClap({ seconds: 3 });
-  status.textContent = `Recorded ${(blob.size / 1024).toFixed(0)} KB at ${settings.sampleRate} Hz.`;
-  // TODO POST blob to /api/clap and show the decay curves
+const PRESETS = [
+  { label: "Small bedroom", d: [3.0, 3.0, 2.5] },
+  { label: "Bedroom", d: [4.0, 3.5, 2.6] },
+  { label: "Living room", d: [5.5, 4.5, 2.6] },
+  { label: "Home office", d: [3.5, 2.8, 2.5] },
+  { label: "Classroom", d: [8.0, 7.0, 3.0] },
+];
+$("presets").innerHTML = PRESETS.map((p, i) =>
+  `<button class="chip" aria-pressed="false" data-preset="${i}">${p.label}</button>`).join("");
+$("presets").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-preset]");
+  if (!b) return;
+  const [length, width, height] = PRESETS[+b.dataset.preset].d;
+  state.dims = { length, width, height };
+  state.scanned = null;
+  document.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  renderDims();
 });
+
+document.querySelectorAll(".stepper").forEach((s) => {
+  s.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-d]");
+    if (!b) return;
+    const k = s.dataset.dim;
+    const step = k === "height" ? 0.1 : 0.25;
+    const min = k === "height" ? 1.8 : 1.5;
+    state.dims[k] = Math.max(min, Math.round((state.dims[k] + step * +b.dataset.d) * 100) / 100);
+    state.scanned = null;
+    document.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", false));
+    renderDims();
+  });
+});
+
+function renderDims() {
+  document.querySelectorAll(".stepper").forEach((s) => {
+    s.querySelector("output").textContent = state.dims[s.dataset.dim].toFixed(1);
+  });
+  showRoom($("view3d-room"), currentRoom());
+}
+
+arSupported().then((ok) => { $("btn-scan").hidden = !ok; });
+$("btn-scan").addEventListener("click", async () => {
+  try {
+    state.scanned = await startScan();
+    showRoom($("view3d-room"), currentRoom());
+  } catch (err) {
+    alert("The scan isn't ready yet. Use the sizes below for now.");
+  }
+});
+
+// ---------- surfaces ----------
+// Common answers map straight to database materials; free text goes to the
+// intake agent (Nemotron) later.
+
+const QUESTIONS = [
+  { key: "floor", title: "The floor", options: [
+    { label: "Wood / laminate", mat: "wood_floor_on_joists" },
+    { label: "Wood with a rug", mat: "wood_floor_on_joists", patch: "carpet_on_concrete" },
+    { label: "Tile or stone", mat: "vinyl_on_concrete" },
+    { label: "Carpet", mat: "carpet_on_pad" },
+  ]},
+  { key: "walls", title: "The walls", options: [
+    { label: "Plaster / paint", mat: "plaster_on_masonry" },
+    { label: "Plasterboard", mat: "gypsum_board_on_studs" },
+    { label: "Bare brick", mat: "brick_unglazed" },
+    { label: "Wood panels", mat: "wood_panel_on_battens" },
+  ]},
+  { key: "ceiling", title: "The ceiling", options: [
+    { label: "Plaster / paint", mat: "plaster_on_masonry" },
+    { label: "Plasterboard", mat: "gypsum_board_on_studs" },
+    { label: "Acoustic tiles", mat: "acoustic_ceiling_tile" },
+  ]},
+  { key: "windows", title: "Windows", options: [
+    { label: "None", area: 0 },
+    { label: "One small", area: 1.5 },
+    { label: "One big", area: 3.5 },
+    { label: "A whole glass wall", area: -1 },
+  ]},
+];
+
+$("surface-questions").innerHTML = QUESTIONS.map((q) => `
+  <div class="q" role="group" aria-label="${q.title}">
+    <span class="q-title">${q.title}</span>
+    <div class="row">${q.options.map((o, i) =>
+      `<button class="chip" aria-pressed="false" data-q="${q.key}" data-i="${i}">${o.label}</button>`).join("")}
+    </div>
+  </div>`).join("");
+$("surface-questions").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-q]");
+  if (!b) return;
+  state.answers[b.dataset.q] = +b.dataset.i;
+  document.querySelectorAll(`[data-q="${b.dataset.q}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
+});
+$("surface-notes").addEventListener("input", (e) => { state.notes = e.target.value; });
+
+// ---------- room model ----------
+
+function currentRoom() {
+  const base = state.scanned ?? {
+    name: "typed",
+    height: state.dims.height,
+    floor: [
+      { x: 0, y: 0 }, { x: state.dims.length, y: 0 },
+      { x: state.dims.length, y: state.dims.width }, { x: 0, y: state.dims.width },
+    ],
+  };
+  return { ...base, surfaces: buildSurfaces(base) };
+}
+
+function pick(key, fallback) {
+  const q = QUESTIONS.find((q) => q.key === key);
+  const i = state.answers[key];
+  return i == null ? fallback : q.options[i];
+}
+
+function buildSurfaces(room) {
+  const n = room.floor.length;
+  const floorArea = state.dims.length * state.dims.width;
+  const floor = pick("floor", QUESTIONS[0].options[0]);
+  const walls = pick("walls", QUESTIONS[1].options[0]);
+  const ceiling = pick("ceiling", QUESTIONS[2].options[0]);
+  const windows = pick("windows", { area: 0 });
+
+  const out = [
+    { kind: "floor", material: floor.mat,
+      patches: floor.patch ? [{ material: floor.patch, area_m2: +(floorArea * 0.3).toFixed(2) }] : [] },
+    { kind: "ceiling", material: ceiling.mat, patches: [] },
+  ];
+  for (let i = 0; i < n; i++) out.push({ kind: "wall", wall_index: i, material: walls.mat, patches: [] });
+
+  // Windows go on the first wall; a glass wall replaces it entirely.
+  if (windows.area === -1) out[2].material = "glass_window";
+  else if (windows.area > 0) out[2].patches.push({ material: "glass_window", area_m2: windows.area });
+  return out;
+}
+
+// ---------- clap ----------
+
+let mic = null;
+let busy = false;
+
+async function doClap() {
+  if (busy) return;
+  busy = true;
+  const btn = $("btn-record"), label = $("clap-label"), coach = $("clap-coach");
+  coach.className = "coach"; coach.textContent = "";
+  $("btn-retry").hidden = true;
+
+  try {
+    mic ??= await openMic();
+    $("mic-explainer").hidden = true;
+  } catch {
+    coach.className = "coach bad";
+    coach.textContent = "Microphone blocked. Allow it in the browser's site settings, then try again.";
+    busy = false;
+    return;
+  }
+
+  // Recording starts during the countdown, so the first second captures the
+  // room's background noise before the clap.
+  const recording = recordClap(mic, {
+    seconds: 5,
+    onLevel: (v) => { $("meter-fill").style.width = `${Math.round(v * 100)}%`; },
+  });
+  btn.className = "clap-btn countdown";
+  for (const n of ["3", "2", "1"]) { label.textContent = n; await sleep(500); }
+  btn.className = "clap-btn listening";
+  label.textContent = "Clap now!";
+  coach.textContent = "Then stay still and quiet…";
+
+  const { pcm, blob, settings } = await recording;
+  $("meter-fill").style.width = "0%";
+
+  const q = quickQuality(pcm, settings.sampleRate);
+  const processed = settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl;
+  btn.className = "clap-btn done";
+  label.textContent = q.level === "bad" ? "Try again" : "Got it";
+  coach.className = `coach ${q.level}`;
+  coach.textContent = q.message + (processed
+    ? " (This phone is filtering the mic, so results may be less accurate.)" : "");
+  $("btn-retry").hidden = false;
+  $("clap-next").disabled = q.level === "bad";
+
+  state.clap = { quality: q, settings, upload: upload(blob) };
+  busy = false;
+}
+
+async function upload(blob) {
+  const form = new FormData();
+  form.append("audio", blob, "clap.wav");
+  form.append("room", JSON.stringify(currentRoom()));
+  form.append("goal", state.goal ?? "");
+  form.append("notes", state.notes);
+  const res = await fetch("/api/clap", { method: "POST", body: form });
+  return res.ok ? res.json() : null;
+}
+
+$("btn-record").addEventListener("click", doClap);
+$("btn-retry").addEventListener("click", doClap);
+
+// ---------- results ----------
+
+async function renderResults() {
+  const room = currentRoom();
+  showRoom($("view3d"), room);
+  const q = state.clap?.quality;
+  const volume = state.dims.length * state.dims.width * state.dims.height;
+  const goal = GOALS.find((g) => g.id === state.goal);
+
+  $("verdict").innerHTML = q ? `
+    <span class="badge ${q.level}">${q.level === "good" ? "Clean measurement" : "Usable measurement"}</span>
+    <strong>${goal ? `Target: ${goal.title.toLowerCase()}` : "Your room"}</strong>
+    <p>Your clap rose ${Math.round(q.rangeDb)} dB above the background noise.
+    ${q.rangeDb >= 35 ? "That's enough to measure how long the echo lasts." : "More would make the echo measurement more reliable."}</p>`
+    : `<span class="badge warn">No clap yet</span><p>Go back one step and clap.</p>`;
+
+  const stats = [
+    ["Volume", `${volume.toFixed(0)} m³`],
+    ["Floor", `${(state.dims.length * state.dims.width).toFixed(1)} m²`],
+    ["Clap strength", q ? `${Math.round(q.rangeDb)} dB` : "–"],
+    ["Mic rate", state.clap ? `${(state.clap.settings.sampleRate / 1000).toFixed(1)} kHz` : "–"],
+  ];
+  $("stats").innerHTML = stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+}
+
+$("btn-restart").addEventListener("click", () => {
+  Object.assign(state, { goal: null, scanned: null, clap: null, notes: "",
+    answers: { floor: null, walls: null, ceiling: null, windows: null } });
+  document.querySelectorAll('[aria-pressed="true"]').forEach((x) => x.setAttribute("aria-pressed", false));
+  document.querySelectorAll('[aria-checked="true"]').forEach((x) => x.setAttribute("aria-checked", false));
+  $("goal-next").disabled = true;
+  $("clap-next").disabled = true;
+  go(0);
+});
+
+// ---------- boot ----------
+
+const onEnter = {
+  room: renderDims,
+  results: renderResults,
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+go(0);
 
 // Installable as an app (PWA). Play Store packaging later via a Trusted Web Activity.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
