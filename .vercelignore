@@ -1,0 +1,6 @@
+.venv
+recordings
+tests
+docs
+scripts
+.env

@@ -84,3 +84,71 @@ def test_clap_is_analysed_with_room(tmp_path, monkeypatch):
     assert out["verdict"]["level"] == "too_live"
     assert out["bass_notes"][0]["freq_hz"] < out["schroeder_hz"]
     assert len(out["model"]["absorption_factor"]) == 6
+
+
+def _fake_models(monkeypatch):
+    from clapback.agents import intake, planner
+    from clapback.llm import nemotron
+
+    monkeypatch.setattr(nemotron, "chat_json", lambda *a, schema=None, **kw: (
+        intake.IntakeResult() if schema is intake.IntakeResult
+        else planner.NextStep(action="done", instruction="", reason="")))
+
+    def no_chat(*a, **kw):
+        raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(nemotron, "chat", no_chat)
+
+
+def _clap_decay(tmp_path, monkeypatch, rt=0.9):
+    import io
+
+    import soundfile as sf
+
+    from clapback import server
+    from tests.test_acoustics import synthetic_clap
+
+    monkeypatch.setattr(server, "RECORDINGS", tmp_path)
+    x, fs = synthetic_clap(rt)
+    buf = io.BytesIO()
+    sf.write(buf, x.astype("float32"), fs, format="WAV", subtype="FLOAT")
+    out = client.post("/api/clap", files={"audio": ("c.wav", buf.getvalue(), "audio/wav")}).json()
+    return out["decay"]
+
+
+ROOM = {
+    "floor": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 4}, {"x": 0, "y": 4}],
+    "height": 2.5,
+    "surfaces": [{"kind": "floor", "material": "wood_floor_on_joists"},
+                 {"kind": "ceiling", "material": "plaster_on_masonry"},
+                 *({"kind": "wall", "wall_index": i, "material": "plaster_on_masonry"} for i in range(4))],
+}
+
+
+def test_analyze_and_plan_are_stateless(tmp_path, monkeypatch):
+    _fake_models(monkeypatch)
+    d = _clap_decay(tmp_path, monkeypatch)
+    res = client.post("/api/analyze", json={"room": ROOM, "goal": "voice", "claps": [d, d]}).json()
+    assert res["claps"] == 2 and abs(res["rt_mid_s"] - 0.9) < 0.15
+    assert res["maps"]["sti"]["values"]
+    plan = client.post("/api/plan", json={"room": ROOM, "goal": "voice", "claps": [d], "budget_eur": 300}).json()
+    assert plan["source"] == "fallback" and plan["after_mid_s"] < plan["before_mid_s"]
+
+
+def test_bad_band_data_is_rejected(monkeypatch):
+    _fake_models(monkeypatch)
+    bad = [{"band_hz": 1000, "t20_s": -3}]
+    assert client.post("/api/analyze", json={"room": ROOM, "claps": [bad]}).status_code == 422
+    assert client.post("/api/analyze", json={"room": ROOM, "claps": []}).status_code == 422
+
+
+def test_model_calls_are_rate_limited(tmp_path, monkeypatch):
+    from clapback import server
+
+    _fake_models(monkeypatch)
+    d = _clap_decay(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "LLM_CALLS_PER_HOUR", 2)
+    server._calls.clear()
+    body = {"room": ROOM, "claps": [d]}
+    codes = [client.post("/api/analyze", json=body, headers={"x-forwarded-for": "9.9.9.9"}).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]

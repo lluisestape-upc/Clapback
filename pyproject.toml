@@ -30,3 +30,11 @@ packages = ["clapback", "clapback.acoustics", "clapback.agents", "clapback.llm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Vercel: the FastAPI app, with web/ promoted to the CDN (its default headers
+# already make browsers revalidate, so the no-cache middleware isn't needed there).
+[tool.vercel]
+entrypoint = "clapback.server:app"
+
+[tool.vercel.fastapi.static]
+cdn = true

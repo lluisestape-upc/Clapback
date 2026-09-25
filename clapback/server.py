@@ -5,16 +5,18 @@ from __future__ import annotations
 import io
 import json
 import logging
-import re
+import os
+import time
+from collections import defaultdict, deque
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import materials, products, targets
 from .acoustics import decay, maps, modes, reverb, treat
@@ -62,7 +64,14 @@ def check_room(room: Room) -> dict:
     }
 
 
-RECORDINGS = Path(__file__).resolve().parent.parent / "recordings"
+# Claps are saved with their context for validating the engine. On Vercel
+# only /tmp is writable (and it doesn't persist), so saving is best-effort;
+# the API itself is stateless: the app sends the per-band results back.
+RECORDINGS = Path(
+    os.environ.get("CLAPBACK_RECORDINGS")
+    or ("/tmp/recordings" if os.environ.get("VERCEL") else Path(__file__).resolve().parent.parent / "recordings")
+)
+MAX_CLAP_SECONDS = 15
 
 
 @app.post("/api/clap")
@@ -85,21 +94,26 @@ async def upload_clap(
         raise HTTPException(422, f"could not read audio: {e}") from e
     if x.ndim > 1:
         x = x.mean(axis=1)
+    if len(x) > MAX_CLAP_SECONDS * fs:
+        raise HTTPException(413, f"recordings longer than {MAX_CLAP_SECONDS} s aren't claps")
 
-    RECORDINGS.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    wav = RECORDINGS / f"clap-{stamp}.wav"
-    sf.write(wav, x, fs, subtype="FLOAT")
-    (RECORDINGS / f"clap-{stamp}.json").write_text(
-        json.dumps(
-            {"room": json.loads(room or "{}"), "goal": goal, "notes": notes, "mic": json.loads(mic or "{}")},
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    try:
+        RECORDINGS.mkdir(parents=True, exist_ok=True)
+        sf.write(RECORDINGS / f"clap-{stamp}.wav", x, fs, subtype="FLOAT")
+        (RECORDINGS / f"clap-{stamp}.json").write_text(
+            json.dumps(
+                {"room": json.loads(room or "{}"), "goal": goal, "notes": notes, "mic": json.loads(mic or "{}")},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        log.warning("could not save clap: %s", e)
     peak = float(np.max(np.abs(x))) if x.size else 0.0
+    bands = decay.analyze(x, fs)
     out = {
-        "id": wav.stem,
+        "id": f"clap-{stamp}",
         "sample_rate": fs,
         "seconds": round(len(x) / fs, 3),
         "peak_dbfs": round(20 * np.log10(peak + 1e-12), 1),
@@ -108,13 +122,26 @@ async def upload_clap(
         room_model = Room.model_validate_json(room) if room and room != "{}" else None
     except ValueError:
         room_model = None
-    out.update(analyze(x, fs, room_model, goal))
+    out["decay"] = [BandIn(**b.to_dict()).model_dump() for b in bands]
+    out.update(combine([bands], room_model, goal))
     return out
 
 
 def analyze(x: np.ndarray, fs: int, room: Room | None, goal: str) -> dict:
     """Everything the results screen shows, from one clap."""
     return combine([decay.analyze(x, fs)], room, goal)
+
+
+class BandIn(BaseModel):
+    """One band of one clap, as /api/clap returned it (the app sends it back)."""
+    band_hz: int = Field(ge=20, le=20000)
+    edt_s: float | None = Field(None, gt=0, le=20)
+    t20_s: float | None = Field(None, gt=0, le=20)
+    t30_s: float | None = Field(None, gt=0, le=20)
+    dynamic_range_db: float = 0.0
+
+    def to_decay(self) -> decay.BandDecay:
+        return decay.BandDecay(**self.model_dump())
 
 
 def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) -> dict:
@@ -163,28 +190,34 @@ def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) ->
 
 class AnalyzeRequest(BaseModel):
     room: Room
-    goal: str = ""
-    notes: str = ""
-    clap_ids: list[str]
+    goal: str = Field("", max_length=32)
+    notes: str = Field("", max_length=600)
+    claps: list[list[BandIn]] = Field(min_length=1, max_length=6)
 
 
 class PlanRequest(AnalyzeRequest):
-    budget_eur: float = 150
+    budget_eur: float = Field(150, ge=0, le=5000)
 
 
-def _load_claps(ids: list[str]) -> list[list[decay.BandDecay]]:
-    out = []
-    for cid in ids:
-        if not re.fullmatch(r"clap-[0-9-]+", cid):
-            raise HTTPException(422, f"bad clap id '{cid}'")
-        wav = RECORDINGS / f"{cid}.wav"
-        if not wav.exists():
-            raise HTTPException(404, f"no recording '{cid}'")
-        x, fs = sf.read(wav, dtype="float32")
-        out.append(decay.analyze(x, fs))
-    if not out:
-        raise HTTPException(422, "no claps given")
-    return out
+def _claps(req: AnalyzeRequest) -> list[list[decay.BandDecay]]:
+    return [[b.to_decay() for b in clap] for clap in req.claps]
+
+
+# A public demo URL means anyone can spend the Nebius credits. Each server
+# instance allows LLM_CALLS_PER_HOUR model-backed requests per client IP.
+LLM_CALLS_PER_HOUR = int(os.environ.get("CLAPBACK_LLM_PER_HOUR", "40"))
+_calls: dict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit(request: Request) -> None:
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0]
+    now = time.monotonic()
+    q = _calls[ip]
+    while q and now - q[0] > 3600:
+        q.popleft()
+    if len(q) >= LLM_CALLS_PER_HOUR:
+        raise HTTPException(429, "Too many analyses from this device for now; try again in an hour.")
+    q.append(now)
 
 
 @lru_cache(maxsize=64)
@@ -202,10 +235,11 @@ def _with_intake(room: Room, notes: str) -> tuple[Room, intake.IntakeResult]:
 
 
 @app.post("/api/analyze")
-def analyze_session(req: AnalyzeRequest) -> dict:
+def analyze_session(req: AnalyzeRequest, request: Request) -> dict:
     """All claps so far + notes → combined report, what the notes added,
     and whether another clap is worth it."""
-    claps = _load_claps(req.clap_ids)
+    _rate_limit(request)
+    claps = _claps(req)
     room, understood = _with_intake(req.room, req.notes)
     out = combine(claps, room, req.goal)
     out["understood"] = understood.model_dump()
@@ -216,9 +250,10 @@ def analyze_session(req: AnalyzeRequest) -> dict:
 
 
 @app.post("/api/plan")
-def make_plan(req: PlanRequest) -> dict:
+def make_plan(req: PlanRequest, request: Request) -> dict:
     """Budgeted treatment plan from Nemotron, scored by the engine."""
-    claps = _load_claps(req.clap_ids)
+    _rate_limit(request)
+    claps = _claps(req)
     room, _ = _with_intake(req.room, req.notes)
     rep = combine(claps, room, req.goal)
     measured = [b["rt_s"] for b in rep["bands"]]

@@ -328,7 +328,7 @@ async function renderResults() {
 
   const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
   const res = uploads.length ? await api("/api/analyze", {
-    room, goal: state.goal ?? "", notes: state.notes, clap_ids: uploads.map((u) => u.id),
+    room, goal: state.goal ?? "", notes: state.notes, claps: uploads.map((u) => u.decay),
   }) : null;
   if (!res) {
     v.innerHTML = `<span class="badge bad">Couldn't reach the server</span>
@@ -468,7 +468,7 @@ $("btn-plan").addEventListener("click", async () => {
   const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
   const p = await api("/api/plan", {
     room: currentRoom(), goal: state.goal ?? "", notes: state.notes,
-    clap_ids: uploads.map((u) => u.id), budget_eur: state.budget,
+    claps: uploads.map((u) => u.decay), budget_eur: state.budget,
   });
   btn.disabled = false;
   if (!p) { out.innerHTML = `<p class="coach bad">Couldn't make a plan. Try again.</p>`; return; }
@@ -506,6 +506,7 @@ function renderPlan(p) {
 async function api(url, body) {
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 429) { alert((await res.json()).detail); return null; }
     return res.ok ? res.json() : null;
   } catch { return null; }
 }
