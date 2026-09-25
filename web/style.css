@@ -232,3 +232,20 @@ details.trace li { margin: 6px 0; }
 .bass-ctrl input { flex: 1; accent-color: var(--accent); }
 .bass-ctrl output { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; }
 .icon-btn.play { background: var(--accent); color: #fff; width: 40px; height: 40px; }
+
+/* AR scan overlay (shown over the camera via WebXR dom-overlay) */
+.ar-canvas { position: fixed; inset: 0; z-index: 10; }
+.ar-overlay {
+  position: fixed; inset: 0; z-index: 11; display: flex; flex-direction: column; justify-content: space-between;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom)); color: #fff;
+  pointer-events: none; font: 17px/1.4 system-ui, sans-serif;
+}
+.ar-overlay button, .ar-overlay input, .ar-overlay label { pointer-events: auto; }
+.ar-top { background: rgb(0 0 0 / 55%); border-radius: 16px; padding: 12px 16px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.ar-hint { margin: 0; font-weight: 600; }
+.ar-count { opacity: .8; white-space: nowrap; font-size: 15px; }
+.ar-bottom { display: flex; flex-direction: column; gap: 10px; }
+.ar-corners, .ar-height { display: flex; gap: 10px; align-items: center; }
+.ar-height label { flex: 1; background: rgb(0 0 0 / 55%); border-radius: 14px; padding: 8px 12px; }
+.ar-height input { width: 5em; font: inherit; margin-left: 8px; border-radius: 8px; border: 0; padding: 6px; }
+.ar-cancel { background: none; border: 0; color: #fff; opacity: .85; text-decoration: underline; font: inherit; padding: 8px; }

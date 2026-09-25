@@ -120,10 +120,21 @@ function renderDims() {
 arSupported().then((ok) => { $("btn-scan").hidden = !ok; });
 $("btn-scan").addEventListener("click", async () => {
   try {
-    state.scanned = await startScan();
+    const room = await startScan({ defaultHeight: state.dims.height });
+    state.scanned = room;
+    const xs = room.floor.map((p) => p.x), ys = room.floor.map((p) => p.y);
+    state.dims = {
+      length: Math.max(...xs) - Math.min(...xs),
+      width: Math.max(...ys) - Math.min(...ys),
+      height: room.height,
+    };
+    document.querySelectorAll(".stepper").forEach((s) => {
+      s.querySelector("output").textContent = state.dims[s.dataset.dim].toFixed(1);
+    });
+    $("btn-scan").querySelector("strong").textContent = "Scanned ✓  Scan again";
     showRoom($("view3d-room"), currentRoom());
   } catch (err) {
-    alert("The scan isn't ready yet. Use the sizes below for now.");
+    if (err?.message !== "cancelled") alert("The scan didn't start. You can type the sizes below instead.");
   }
 });
 
@@ -199,7 +210,10 @@ function pick(key, fallback) {
 
 function buildSurfaces(room) {
   const n = room.floor.length;
-  const floorArea = state.dims.length * state.dims.width;
+  const floorArea = Math.abs(room.floor.reduce((a, p, i) => {
+    const q = room.floor[(i + 1) % room.floor.length];
+    return a + p.x * q.y - q.x * p.y;
+  }, 0)) / 2;
   const floor = pick("floor", QUESTIONS[0].options[0]);
   const walls = pick("walls", QUESTIONS[1].options[0]);
   const ceiling = pick("ceiling", QUESTIONS[2].options[0]);
