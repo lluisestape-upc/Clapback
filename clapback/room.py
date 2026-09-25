@@ -55,6 +55,9 @@ class Room(BaseModel):
     height: float = Field(gt=0)
     surfaces: list[Surface] = Field(default_factory=list)
     furnishing: Literal["empty", "some", "full"] | None = None
+    # Free-standing absorbers (sofa, bookshelf, rug...) added on top of the
+    # surfaces, usually by the intake agent from the user's notes.
+    extras: list[Patch] = Field(default_factory=list)
     source: Point3 | None = None
     receivers: list[Point3] = Field(default_factory=list)
 

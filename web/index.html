@@ -106,6 +106,11 @@
     <section class="screen" data-screen="results" hidden>
       <h2>Your room</h2>
       <div class="verdict" id="verdict" aria-live="polite"></div>
+      <div class="card next-card" id="next-card" hidden>
+        <strong>Want a sharper result?</strong>
+        <p id="next-text"></p>
+        <button class="secondary" id="btn-next-clap">Clap once more</button>
+      </div>
       <div class="card" id="rt-card" hidden>
         <h3>How long the echo lasts</h3>
         <p class="sub small">Per pitch, from low to high. The shaded band is the target for your use.</p>
@@ -116,12 +121,20 @@
         <p class="sub small">The room's shape makes these bass notes ring louder than the rest.</p>
         <div class="row" id="bass-notes"></div>
       </div>
+      <div class="card" id="understood-card" hidden>
+        <h3>What I counted from your notes</h3>
+        <div class="row" id="understood"></div>
+      </div>
       <div class="result-3d" id="view3d" aria-label="3D view of the room"></div>
       <dl class="stats" id="stats"></dl>
-      <div class="note">
-        <strong>Coming next</strong>
-        <p>A speech-clarity map of the room and a shopping list of fixes that
-        fits your budget.</p>
+
+      <div class="card fix" id="fix-card" hidden>
+        <h3>Fix it</h3>
+        <p class="sub small">How much would you spend? Nemotron tries options and the
+        acoustics engine checks each one.</p>
+        <div class="row" id="budgets" role="radiogroup" aria-label="Budget"></div>
+        <button class="primary" id="btn-plan">Make my plan</button>
+        <div id="plan" aria-live="polite"></div>
       </div>
       <div class="actions">
         <button class="secondary" id="btn-restart">Measure another room</button>

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import TypeVar
 
 from dotenv import load_dotenv
@@ -26,6 +27,7 @@ SUPER = "nvidia/nemotron-3-super-120b-a12b"
 ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1"
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"  # project root, whatever the cwd
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -36,21 +38,32 @@ class EmptyAnswer(RuntimeError):
 
 @lru_cache
 def client() -> OpenAI:
-    load_dotenv()
+    load_dotenv(ENV_FILE)
     key = os.environ.get("NEBIUS_API_KEY")
     if not key:
         raise RuntimeError("NEBIUS_API_KEY is not set (copy .env.example to .env)")
     return OpenAI(api_key=key, base_url=os.environ.get("NEBIUS_BASE_URL", DEFAULT_BASE_URL))
 
 
-def chat(messages: list[dict], model: str = SUPER, max_tokens: int = 4096, **kw):
-    """Raw chat completion. Returns the full response (usage included)."""
+def chat(messages: list[dict], model: str = SUPER, max_tokens: int = 4096, thinking: bool = True, **kw):
+    """Raw chat completion. Returns the full response (usage included).
+
+    thinking=False turns off Nemotron's reasoning phase (via the chat
+    template), which cuts latency from seconds to well under one for simple
+    extraction calls.
+    """
+    if not thinking:
+        extra = dict(kw.pop("extra_body", None) or {})
+        extra["chat_template_kwargs"] = {"enable_thinking": False}
+        kw["extra_body"] = extra
     return client().chat.completions.create(
         model=model, messages=messages, max_tokens=max_tokens, **kw
     )
 
 
-def chat_json(messages: list[dict], schema: type[T], model: str = SUPER, max_tokens: int = 4096) -> T:
+def chat_json(
+    messages: list[dict], schema: type[T], model: str = SUPER, max_tokens: int = 4096, thinking: bool = True
+) -> T:
     """Ask for JSON matching `schema` and validate it.
 
     The schema is also put in the system prompt, so this works even if the
@@ -65,6 +78,7 @@ def chat_json(messages: list[dict], schema: type[T], model: str = SUPER, max_tok
         [system, *messages],
         model=model,
         max_tokens=max_tokens,
+        thinking=thinking,
         response_format={"type": "json_object"},
     )
     content = resp.choices[0].message.content

@@ -45,6 +45,8 @@ def _surface_items(room: Room) -> list[tuple[float, list[float]]]:
         items.append((base, materials.get(s.material).alpha))
         for p in s.patches:
             items.append((min(p.area_m2, area), materials.get(p.material).alpha))
+    for e in room.extras:
+        items.append((e.area_m2, materials.get(e.material).alpha))
     return items
 
 

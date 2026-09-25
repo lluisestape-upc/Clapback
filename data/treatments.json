@@ -1,0 +1,58 @@
+{
+  "note": "Rough prices in EUR for planning only; the optimizer can look up real products later (Tavily).",
+  "treatments": [
+    {
+      "id": "panel_50",
+      "material": "porous_panel_50mm",
+      "name": "Acoustic panels, 5 cm",
+      "where": [
+        "wall",
+        "ceiling"
+      ],
+      "eur_per_m2": 30,
+      "max_m2_fraction": 0.4
+    },
+    {
+      "id": "panel_100",
+      "material": "porous_panel_100mm",
+      "name": "Acoustic panels, 10 cm (better bass)",
+      "where": [
+        "wall",
+        "ceiling"
+      ],
+      "eur_per_m2": 50,
+      "max_m2_fraction": 0.4
+    },
+    {
+      "id": "curtain",
+      "material": "curtain_heavy_draped",
+      "name": "Heavy curtains",
+      "where": [
+        "window",
+        "wall"
+      ],
+      "eur_per_m2": 25,
+      "max_m2_fraction": 0.5
+    },
+    {
+      "id": "rug",
+      "material": "carpet_on_pad",
+      "name": "Thick rug with underlay",
+      "where": [
+        "floor"
+      ],
+      "eur_per_m2": 30,
+      "max_m2_fraction": 0.6
+    },
+    {
+      "id": "bookshelf",
+      "material": "bookshelf_filled",
+      "name": "Filled bookshelf",
+      "where": [
+        "wall"
+      ],
+      "eur_per_m2": 60,
+      "max_m2_fraction": 0.3
+    }
+  ]
+}

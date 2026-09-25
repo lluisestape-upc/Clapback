@@ -14,7 +14,9 @@ const state = {
   scanned: null,           // Room from the AR scan, if used
   answers: { floor: null, walls: null, ceiling: null, furnishing: null, windows: null },
   notes: "",
-  clap: null,              // { quality, upload }
+  clap: null,              // last clap: { quality, settings, upload }
+  claps: [],               // every good clap this session (uploads)
+  budget: 150,
 };
 
 // ---------- navigation ----------
@@ -264,6 +266,7 @@ async function doClap() {
   $("clap-next").disabled = q.level === "bad";
 
   state.clap = { quality: q, settings, upload: upload(blob, settings) };
+  if (q.level !== "bad") state.claps.push(state.clap);
   busy = false;
 }
 
@@ -306,22 +309,40 @@ async function renderResults() {
 
   v.className = "verdict";
   v.innerHTML = `<div class="spinner" aria-hidden="true"></div><p>Listening back to your clap…</p>`;
-  $("rt-card").hidden = $("bass-card").hidden = true;
+  for (const id of ["rt-card", "bass-card", "next-card", "understood-card", "fix-card"]) $(id).hidden = true;
+  $("plan").innerHTML = "";
 
-  const res = await state.clap.upload;
+  const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
+  const res = uploads.length ? await api("/api/analyze", {
+    room, goal: state.goal ?? "", notes: state.notes, clap_ids: uploads.map((u) => u.id),
+  }) : null;
   if (!res) {
     v.innerHTML = `<span class="badge bad">Couldn't reach the server</span>
       <p>Check the connection and clap again.</p>`;
     return;
   }
+  state.analysis = res;
 
   const vd = res.verdict;
   v.className = `verdict ${vd.level}`;
   v.innerHTML = `
-    <span class="badge ${q.level}">${goal ? goal.title : "Your room"}</span>
+    <span class="badge ${q.level}">${goal ? goal.title : "Your room"} · ${res.claps} clap${res.claps > 1 ? "s" : ""}</span>
     <h3>${vd.headline}</h3>
     <p>${vd.detail}</p>
     ${res.rt_mid_s ? gauge(res.rt_mid_s, vd.target_s) : ""}`;
+
+  if (res.next?.action === "clap") {
+    $("next-text").textContent = res.next.instruction;
+    $("next-card").hidden = false;
+  }
+
+  const u = res.understood;
+  if (u && (u.extras.length || u.unknown.length)) {
+    $("understood").innerHTML =
+      u.extras.map((e) => `<span class="chip static">${esc(e.what)} · ${e.area_m2} m²</span>`).join("") +
+      u.unknown.map((w) => `<span class="chip static unknown" title="Not counted">${esc(w)}?</span>`).join("");
+    $("understood-card").hidden = false;
+  }
 
   if (res.bands?.some((b) => b.rt_s)) {
     $("rt-chart").innerHTML = rtChart(res.bands, vd.target_s);
@@ -338,10 +359,86 @@ async function renderResults() {
     ["Echo time (mid)", res.rt_mid_s ? `${res.rt_mid_s.toFixed(2)} s` : "–"],
     ["Target", `${vd.target_s.toFixed(2)} s`],
     ["Volume", `${res.volume_m3?.toFixed(0) ?? "–"} m³`],
-    ["Clap strength", `${Math.round(q.rangeDb)} dB`],
+    ["Claps agree", res.mid_spread_pct != null ? `±${(res.mid_spread_pct / 2).toFixed(0)} %` : "1 clap"],
   ];
   $("stats").innerHTML = stats.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join("");
+
+  if (res.rt_mid_s) $("fix-card").hidden = false;
 }
+
+// ---------- plan ----------
+
+const BUDGETS = [50, 150, 300, 500];
+$("budgets").innerHTML = BUDGETS.map((b) =>
+  `<button class="chip" role="radio" aria-checked="${b === state.budget}" aria-pressed="${b === state.budget}" data-budget="${b}">€${b}</button>`).join("");
+$("budgets").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-budget]");
+  if (!b) return;
+  state.budget = +b.dataset.budget;
+  document.querySelectorAll("[data-budget]").forEach((x) => {
+    x.setAttribute("aria-pressed", x === b); x.setAttribute("aria-checked", x === b);
+  });
+});
+
+$("btn-plan").addEventListener("click", async () => {
+  const out = $("plan"), btn = $("btn-plan");
+  btn.disabled = true;
+  out.innerHTML = `<div class="spinner" aria-hidden="true"></div><p class="sub small">Nemotron is trying options; the engine checks each one…</p>`;
+  const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
+  const p = await api("/api/plan", {
+    room: currentRoom(), goal: state.goal ?? "", notes: state.notes,
+    clap_ids: uploads.map((u) => u.id), budget_eur: state.budget,
+  });
+  btn.disabled = false;
+  if (!p) { out.innerHTML = `<p class="coach bad">Couldn't make a plan. Try again.</p>`; return; }
+  out.innerHTML = renderPlan(p);
+});
+
+const WHERE = { wall: "on the walls", floor: "on the floor", ceiling: "on the ceiling", window: "over the window" };
+
+function renderPlan(p) {
+  const items = p.treatments.length
+    ? `<ul class="plan-items">${p.treatments.map((t) => `
+        <li><div>${esc(t.name)}<span>${t.area_m2} m² ${WHERE[t.where] ?? t.where}</span></div><b>€${t.cost_eur}</b></li>`).join("")}
+      </ul><div class="plan-total"><span>Total</span><span>€${p.cost_eur}</span></div>`
+    : "";
+  const tries = p.trace.filter((s) => s.tool);
+  const trace = tries.length ? `
+    <details class="trace"><summary>How it decided (${tries.length} tries)</summary><ol>
+      ${tries.map((s) => `<li>${s.tool === "finish" ? "Final: " : "Tried "}${
+        s.treatments.map((t) => `${t.area_m2} m² ${t.id.replace("_", " ")} (${t.where})`).join(" + ") || "nothing"} → ${
+        s.result.valid ? `${s.result.predicted_mid_s} s, €${s.result.cost_eur}` : `rejected: ${esc(s.result.errors[0])}`}</li>`).join("")}
+    </ol></details>` : "";
+  return `
+    <div class="before-after"><span>${p.before_mid_s.toFixed(2)} s</span><span class="arrow">→</span>
+      <span class="after">${p.after_mid_s.toFixed(2)} s</span></div>
+    ${gauge(p.after_mid_s, p.target_s)}
+    ${items}
+    <p class="plan-summary">${esc(p.summary)}</p>
+    ${trace}
+    ${p.source === "fallback" ? `<p class="sub small">Nemotron wasn't available, so this plan comes from a simple rule.</p>` : ""}`;
+}
+
+async function api(url, body) {
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return res.ok ? res.json() : null;
+  } catch { return null; }
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+$("btn-next-clap").addEventListener("click", () => {
+  $("btn-record").className = "clap-btn";
+  $("clap-label").textContent = "Tap, then clap";
+  $("clap-coach").className = "coach";
+  $("clap-coach").textContent = $("next-text").textContent;
+  $("btn-retry").hidden = true;
+  $("clap-next").disabled = true;
+  go(SCREENS.indexOf("clap"));
+});
 
 // Horizontal scale 0 .. 2×target (at least 1.5 s), green zone = target ±20 %.
 function gauge(rt, target) {
@@ -381,7 +478,7 @@ function rtChart(bands, target) {
 }
 
 $("btn-restart").addEventListener("click", () => {
-  Object.assign(state, { goal: null, scanned: null, clap: null, notes: "",
+  Object.assign(state, { goal: null, scanned: null, clap: null, claps: [], notes: "",
     answers: { floor: null, walls: null, ceiling: null, furnishing: null, windows: null } });
   document.querySelectorAll('[aria-pressed="true"]').forEach((x) => x.setAttribute("aria-pressed", false));
   document.querySelectorAll('[aria-checked="true"]').forEach((x) => x.setAttribute("aria-checked", false));

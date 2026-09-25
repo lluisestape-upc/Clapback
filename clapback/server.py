@@ -4,21 +4,37 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import re
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from . import materials, targets
-from .acoustics import decay, modes, reverb
+from .acoustics import decay, modes, reverb, treat
+from .agents import intake, optimizer, planner
 from .room import Room
 
 WEB = Path(__file__).resolve().parent.parent / "web"
+log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Clapback")
+
+
+@app.middleware("http")
+async def no_stale_app(request, call_next):
+    """Phones cache the app's JS aggressively; make them revalidate so every
+    update shows up on the next load (ETags keep it cheap)."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/api/health")
@@ -98,12 +114,32 @@ async def upload_clap(
 
 def analyze(x: np.ndarray, fs: int, room: Room | None, goal: str) -> dict:
     """Everything the results screen shows, from one clap."""
-    bands = decay.analyze(x, fs)
-    by_band = {b.band_hz: b.rt_s for b in bands}
-    mids = [by_band.get(f) for f in (500, 1000) if by_band.get(f)]
+    return combine([decay.analyze(x, fs)], room, goal)
+
+
+def combine(claps: list[list[decay.BandDecay]], room: Room | None, goal: str) -> dict:
+    """Average several claps per band (valid values only) and build the report."""
+    bands_hz = [b.band_hz for b in claps[0]] if claps else []
+    per_band = {f: [b.rt_s for c in claps for b in c if b.band_hz == f and b.rt_s] for f in bands_hz}
+    rt = {f: (sum(v) / len(v) if v else None) for f, v in per_band.items()}
+    mids = [rt.get(f) for f in (500, 1000) if rt.get(f)]
     rt_mid = sum(mids) / len(mids) if mids else None
 
-    out: dict = {"bands": [b.to_dict() for b in bands], "rt_mid_s": rt_mid}
+    # spread of the per-clap mid RT, for the planner
+    clap_mids = []
+    for c in claps:
+        m = [b.rt_s for b in c if b.band_hz in (500, 1000) and b.rt_s]
+        if m:
+            clap_mids.append(sum(m) / len(m))
+    spread = (max(clap_mids) - min(clap_mids)) / rt_mid * 100 if rt_mid and len(clap_mids) > 1 else None
+
+    out: dict = {
+        "claps": len(claps),
+        "bands": [{"band_hz": f, "rt_s": rt[f], "n": len(per_band[f])} for f in bands_hz],
+        "rt_mid_s": rt_mid,
+        "clap_mids_s": [round(m, 3) for m in clap_mids],
+        "mid_spread_pct": round(spread, 1) if spread is not None else None,
+    }
     if room is None:
         return out
 
@@ -119,14 +155,81 @@ def analyze(x: np.ndarray, fs: int, room: Room | None, goal: str) -> dict:
         ms = modes.room_modes(lx, ly, room.height, f_max=200)
         out["bass_notes"] = modes.problem_frequencies(ms, below_hz=out.get("schroeder_hz", 200))
     if room.surfaces:
-        measured = [by_band.get(f) for f in reverb.OCTAVE_BANDS_HZ]
-        out["model"] = reverb.calibrate(room, measured)
+        out["model"] = reverb.calibrate(room, [rt.get(f) for f in reverb.OCTAVE_BANDS_HZ])
     return out
 
 
-# TODO POST /api/analyze   room + claps → RT, modes, maps, calibration
-# TODO POST /api/intake    surface descriptions → materials (agents.intake)
-# TODO POST /api/next      → next measurement (agents.planner)
-# TODO POST /api/plan      goal + budget → treatment plan (agents.optimizer)
+class AnalyzeRequest(BaseModel):
+    room: Room
+    goal: str = ""
+    notes: str = ""
+    clap_ids: list[str]
+
+
+class PlanRequest(AnalyzeRequest):
+    budget_eur: float = 150
+
+
+def _load_claps(ids: list[str]) -> list[list[decay.BandDecay]]:
+    out = []
+    for cid in ids:
+        if not re.fullmatch(r"clap-[0-9-]+", cid):
+            raise HTTPException(422, f"bad clap id '{cid}'")
+        wav = RECORDINGS / f"{cid}.wav"
+        if not wav.exists():
+            raise HTTPException(404, f"no recording '{cid}'")
+        x, fs = sf.read(wav, dtype="float32")
+        out.append(decay.analyze(x, fs))
+    if not out:
+        raise HTTPException(422, "no claps given")
+    return out
+
+
+@lru_cache(maxsize=64)
+def _intake_cached(room_json: str, notes: str) -> intake.IntakeResult:
+    return intake.run(Room.model_validate_json(room_json), notes)
+
+
+def _with_intake(room: Room, notes: str) -> tuple[Room, intake.IntakeResult]:
+    try:
+        res = _intake_cached(room.model_dump_json(), notes.strip())
+    except Exception as e:  # noqa: BLE001 - the notes are optional; carry on without them
+        log.warning("intake failed: %s", e)
+        res = intake.IntakeResult(unknown=[notes.strip()] if notes.strip() else [])
+    return intake.apply(room, res), res
+
+
+@app.post("/api/analyze")
+def analyze_session(req: AnalyzeRequest) -> dict:
+    """All claps so far + notes → combined report, what the notes added,
+    and whether another clap is worth it."""
+    claps = _load_claps(req.clap_ids)
+    room, understood = _with_intake(req.room, req.notes)
+    out = combine(claps, room, req.goal)
+    out["understood"] = understood.model_dump()
+    report = {k: out.get(k) for k in ("claps", "rt_mid_s", "clap_mids_s", "mid_spread_pct")}
+    report["low_bands_usable"] = [b["band_hz"] for b in out["bands"] if b["band_hz"] <= 250 and b["rt_s"]]
+    out["next"] = planner.run(report).model_dump()
+    return out
+
+
+@app.post("/api/plan")
+def make_plan(req: PlanRequest) -> dict:
+    """Budgeted treatment plan from Nemotron, scored by the engine."""
+    claps = _load_claps(req.clap_ids)
+    room, _ = _with_intake(req.room, req.notes)
+    rep = combine(claps, room, req.goal)
+    measured = [b["rt_s"] for b in rep["bands"]]
+    if not rep["rt_mid_s"]:
+        raise HTTPException(422, "no usable measurement yet")
+    target = targets.target_rt(req.goal, room.volume())
+    plan = optimizer.run(room, req.goal, measured, target, req.budget_eur, rep.get("bass_notes"))
+    names = {c["id"]: c["name"] for c in treat.catalogue().values()}
+    out = plan.model_dump()
+    for t in out["treatments"]:
+        t["name"] = names.get(t["id"], t["id"])
+        t["cost_eur"] = round(treat.catalogue()[t["id"]]["eur_per_m2"] * t["area_m2"])
+    return out
+
 
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

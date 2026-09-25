@@ -199,3 +199,25 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Planner, intake, plan */
+.next-card { border-left: 4px solid var(--accent); }
+.next-card p { margin: 4px 0 12px; color: var(--muted); }
+.next-card .secondary { width: 100%; flex: none; }
+.fix .row { margin-bottom: 12px; }
+.fix .primary { width: 100%; flex: none; }
+.plan-items { list-style: none; padding: 0; margin: 14px 0 8px; }
+.plan-items li { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.plan-items li span { color: var(--muted); font-size: 14px; display: block; }
+.plan-items b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-total { display: flex; justify-content: space-between; font-weight: 700; margin: 6px 0 12px; }
+.plan-summary { margin: 10px 0; }
+.before-after { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 700; margin: 10px 0 2px; font-variant-numeric: tabular-nums; }
+.before-after .arrow { color: var(--muted); font-weight: 400; }
+.before-after .after { color: var(--good); }
+details.trace { margin-top: 10px; font-size: 14px; color: var(--muted); }
+details.trace summary { cursor: pointer; font-weight: 600; color: var(--fg); }
+details.trace ol { padding-left: 20px; }
+details.trace li { margin: 6px 0; }
+.chip.static { cursor: default; }
+.chip.unknown { border-style: dashed; color: var(--muted); }
