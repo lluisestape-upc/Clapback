@@ -3,11 +3,14 @@
 Clap once in a room. Clapback tells you why it sounds the way it does and
 what to change.
 
-You tell it what the room is for, give its size (typed, or scanned with the
-phone camera), tap what it's made of, and clap where it asks you to. You get
-the echo time per frequency against a target for your use, the bass notes
-the room's shape will boom on, 3D maps of speech clarity and bass over the
-floor, and a shopping list that fits your budget.
+You tell it what the room is for, give its size (typed, measured with the
+phone camera, or scanned in AR), tap what it's made of, and measure: a clap
+for a quick answer, or a test sweep from a speaker for an accurate one. You
+get the reverberation time (RT60) per octave band against a target from the
+standards, decay curves, a spectrogram of the decay, the frequency response
+and room modes, the ISO 3382-1 values (EDT, T20, T30, C50, C80, D50), 3D maps
+of speech clarity and bass over the floor, and a treatment plan that fits
+your budget.
 
 Built for the [Nebius x NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com/).
 
@@ -15,13 +18,17 @@ Built for the [Nebius x NVIDIA Global AI Hackathon](https://nebiusglobalaihackat
 
 ```
 phone (installable web app)
-  goal → size (presets, steppers or AR scan) → materials + notes → clap
+  goal → size (presets, steppers, camera + tilt, or AR scan)
+       → materials + notes → clap, or test sweep → results with charts
         │  raw PCM, browser voice processing off
         ▼
 server (Python, FastAPI)
   acoustics engine: deterministic, tested
     decay.py   onset → octave bands → noise crosspoint (Lundeby-style)
                → Schroeder decay → EDT / T20 / T30, gated by dynamic range
+               → C50 / C80 / D50; curves and spectrogram for the charts
+    sweep.py   exponential sine sweep (Farina) → deconvolution → impulse
+               response, frequency response, IR as WAV
     modes.py   rectangular-room modes → boomy-note clusters, Schroeder frequency
     reverb.py  Sabine / Eyring + air + furnishing, calibration against the claps
     maps.py    C50 (Barron's revised theory), STI estimate, modal pressure
@@ -64,6 +71,22 @@ Measured cost of a full session (3 claps with notes, then a plan): **9 Super
 calls, ~10.4k input + ~1k output tokens, ~15 s total**. At Token Factory's
 per-token pricing that's well under one cent per room.
 
+## Measuring
+
+- **Clap.** Just the phone. Good for the mid and high bands; one clap is
+  rough below 250 Hz, so the app asks for more.
+- **Test sweep.** A 6 s tone from 40 Hz to 16 kHz, played by a speaker at
+  least 2 m away: a Bluetooth speaker connected to the phone, or a laptop or
+  second phone with `/speaker.html` open. Deconvolution gives the impulse
+  response with far more signal than a clap, and the frequency response
+  shows the room modes. The phone's own speaker can't be used: it sits next
+  to the mic, so the direct sound would swamp the decay.
+- **Room size with the camera.** On any phone: aim at the line where each
+  wall meets the floor and the phone's tilt gives the distance
+  (d = h / tan θ); five taps give length, width and height, within a few
+  percent. On ARCore phones there is also an AR scan that taps the floor
+  corners (any room shape) and measures the ceiling by aiming above one.
+
 ## Run it
 
 ```bash
@@ -101,10 +124,11 @@ Chrome on an ARCore-supported Android phone.
 ```
 clapback/
   room.py, materials.py, targets.py, products.py, server.py
-  acoustics/   decay, modes, reverb, maps, treat
+  acoustics/   decay, sweep, modes, reverb, maps, treat
   agents/      intake, planner, optimizer
   llm/         Nemotron client
-web/           the app (no build step): app.js, capture.js, scan.js, room3d.js
+web/           the app (no build step): app.js, capture.js, charts.js,
+               sweep.js, measure.js, scan.js, room3d.js; speaker.html
 data/          materials.json, treatments.json
 tests/         pytest (engine, agents with the model faked, API)
 docs/          PLAN.md, ARCHITECTURE.md

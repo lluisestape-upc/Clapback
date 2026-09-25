@@ -3,7 +3,9 @@
 // What the user sees:
 //   "Point at a floor corner and tap"  → marker → "Next corner" → …
 //   tap near the first corner (or "Done") to close the outline,
-//   then set the ceiling height (hit-test can't find ceilings reliably).
+//   then aim at the ceiling right above any corner and tap "Mark ceiling".
+//   Hit-test can't find ceilings, but the corner's vertical line is known,
+//   so the height is where the view ray passes over it (ceilingAbove).
 //
 // Output: the same Room JSON as the typed form (see clapback/room.py), with the
 // first wall along +x and the floor starting at (0, 0). A 4-corner outline that
@@ -126,8 +128,23 @@ export async function startScan({ defaultHeight = 2.6 } = {}) {
     overlay.corners.hidden = true;
     overlay.height.hidden = false;
     overlay.heightInput.value = defaultHeight.toFixed(1);
-    hint("Last step: how high is the ceiling?");
+    overlay.root.classList.add("aiming");
+    hint("Last step: aim the cross at the ceiling right above a corner, then tap Mark ceiling.");
   }
+
+  overlay.mark.addEventListener("click", () => {
+    const cam = renderer.xr.getCamera();
+    const p = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const v = new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld);
+    const h = ceilingAbove(p, v, corners);
+    if (h && h > 1.8 && h < 8) {
+      overlay.heightInput.value = h.toFixed(2);
+      navigator.vibrate?.(20);
+      hint(`Ceiling at ${h.toFixed(2)} m. Mark again to check, or use this room.`);
+    } else {
+      hint("Couldn't line that up with a corner. Aim straight above one of the orange markers.");
+    }
+  });
   overlay.done.addEventListener("click", finishOutline);
 
   overlay.confirm.addEventListener("click", () => {
@@ -162,6 +179,23 @@ export async function startScan({ defaultHeight = 2.6 } = {}) {
   }
 }
 
+// Height of the ceiling above the floor corner the view ray passes over:
+// p = camera position, v = view direction, both in the XR reference space
+// (y up). The corner nearest the view direction (within 15°) is used.
+export function ceilingAbove(p, v, corners) {
+  const vh = Math.hypot(v.x, v.z);
+  if (vh < 1e-3 || v.y <= 0) return null;
+  let best = null;
+  for (const c of corners) {
+    const dx = c.x - p.x, dz = c.z - p.z, dist = Math.hypot(dx, dz);
+    const cos = (dx * v.x + dz * v.z) / (dist * vh);
+    if (!best || cos > best.cos) best = { c, cos, dist };
+  }
+  if (!best || best.cos < Math.cos((15 * Math.PI) / 180)) return null;
+  const t = (best.dist * best.cos) / vh;       // where the ray is horizontally level with the corner
+  return p.y + t * v.y - best.c.y;
+}
+
 // Rotate so the first wall runs along +x, move the floor to start at (0, 0),
 // make the winding counter-clockwise, and snap near-rectangles to rectangles.
 export function normalise(pts) {
@@ -192,13 +226,15 @@ function buildOverlay() {
   root.className = "ar-overlay";
   root.innerHTML = `
     <div class="ar-top"><p class="ar-hint" aria-live="polite"></p><span class="ar-count"></span></div>
+    <div class="measure-cross ar-cross" aria-hidden="true"></div>
     <div class="ar-bottom">
       <div class="ar-corners">
         <button class="secondary ar-undo">Undo</button>
         <button class="primary ar-done" disabled>Done</button>
       </div>
       <div class="ar-height" hidden>
-        <label>Ceiling height (m) <input type="number" step="0.1" min="1.8" max="8" inputmode="decimal"></label>
+        <button class="secondary ar-mark">Mark ceiling</button>
+        <label>Height (m) <input type="number" step="0.01" min="1.8" max="8" inputmode="decimal"></label>
         <button class="primary ar-confirm">Use this room</button>
       </div>
       <button class="ar-cancel">Cancel scan</button>
@@ -208,7 +244,7 @@ function buildOverlay() {
     root, stage: "corners",
     hint: $(".ar-hint"), count: $(".ar-count"),
     corners: $(".ar-corners"), undo: $(".ar-undo"), done: $(".ar-done"),
-    height: $(".ar-height"), heightInput: $(".ar-height input"), confirm: $(".ar-confirm"),
+    height: $(".ar-height"), heightInput: $(".ar-height input"), confirm: $(".ar-confirm"), mark: $(".ar-mark"),
     cancel: $(".ar-cancel"),
   };
 }

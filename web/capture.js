@@ -31,7 +31,8 @@ export async function openMic() {
 }
 
 // onLevel(0..1) is called per audio block while recording.
-export async function recordClap(stream, { seconds = 5, onLevel = () => {} } = {}) {
+// bits: 32 (float) for claps; 16 halves the upload of a 15 s sweep recording.
+export async function recordClap(stream, { seconds = 5, onLevel = () => {}, bits = 32 } = {}) {
   const track = stream.getAudioTracks()[0];
   const ctx = new AudioContext();
   const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
@@ -62,7 +63,7 @@ export async function recordClap(stream, { seconds = 5, onLevel = () => {} } = {
   let o = 0;
   for (const c of chunks) { pcm.set(c, o); o += c.length; }
 
-  return { pcm, settings, blob: toWav(pcm, settings.sampleRate) };
+  return { pcm, settings, blob: toWav(pcm, settings.sampleRate, bits) };
 }
 
 // Rough, fast check for coaching only. The real analysis happens on the server.
@@ -90,20 +91,22 @@ export function quickQuality(pcm, fs) {
   return { level, message, rangeDb: range, peakDb: 20 * Math.log10(peak + 1e-9) };
 }
 
-// 32-bit float WAV, mono.
-function toWav(pcm, fs) {
-  const buf = new ArrayBuffer(44 + pcm.length * 4);
+// Mono WAV: 32-bit float, or 16-bit PCM.
+function toWav(pcm, fs, bits = 32) {
+  const bytes = bits / 8;
+  const buf = new ArrayBuffer(44 + pcm.length * bytes);
   const v = new DataView(buf);
   const str = (off, s) => [...s].forEach((c, i) => v.setUint8(off + i, c.charCodeAt(0)));
-  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length * 4, true); str(8, "WAVE");
+  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length * bytes, true); str(8, "WAVE");
   str(12, "fmt "); v.setUint32(16, 16, true);
-  v.setUint16(20, 3, true);           // format 3 = IEEE float
-  v.setUint16(22, 1, true);           // mono
+  v.setUint16(20, bits === 32 ? 3 : 1, true);   // 3 = IEEE float, 1 = PCM
+  v.setUint16(22, 1, true);                     // mono
   v.setUint32(24, fs, true);
-  v.setUint32(28, fs * 4, true);      // byte rate
-  v.setUint16(32, 4, true);           // block align
-  v.setUint16(34, 32, true);          // bits per sample
-  str(36, "data"); v.setUint32(40, pcm.length * 4, true);
-  new Float32Array(buf, 44).set(pcm);
+  v.setUint32(28, fs * bytes, true);            // byte rate
+  v.setUint16(32, bytes, true);                 // block align
+  v.setUint16(34, bits, true);
+  str(36, "data"); v.setUint32(40, pcm.length * bytes, true);
+  if (bits === 32) new Float32Array(buf, 44).set(pcm);
+  else pcm.forEach((s, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, s)) * 32767, true));
   return new Blob([buf], { type: "audio/wav" });
 }

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Clapback speaker</title>
+  <meta name="theme-color" content="#d9480f">
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <section class="screen">
+      <h2>Clapback speaker</h2>
+      <p class="sub">This device plays the test sweep; the phone with Clapback records it.</p>
+      <ol class="howto">
+        <li>Put this device at least 2 m from the phone, roughly at ear height.</li>
+        <li>Turn the volume to about three quarters. Loud, but not distorting.</li>
+        <li>On the phone, tap <b>Tap to measure</b>, then press <b>Play</b> here.</li>
+      </ol>
+      <div class="clap-stage">
+        <button class="clap-btn" id="play" type="button">
+          <span class="pulse" aria-hidden="true"></span>
+          <span class="clap-label" id="label">Play</span>
+        </button>
+        <p class="coach" id="coach" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <script type="module">
+    import { SWEEP, playSweep } from "./sweep.js";
+    const btn = document.getElementById("play");
+    const label = document.getElementById("label");
+    const coach = document.getElementById("coach");
+    let ctx = null;
+    btn.addEventListener("click", async () => {
+      if (btn.classList.contains("listening")) return;
+      ctx ??= new AudioContext();
+      btn.className = "clap-btn listening";
+      label.textContent = "Playing…";
+      coach.className = "coach";
+      coach.textContent = `A ${SWEEP.seconds}-second tone from ${SWEEP.f1} Hz to ${SWEEP.f2 / 1000} kHz.`;
+      await playSweep(ctx);
+      btn.className = "clap-btn done";
+      label.textContent = "Play again";
+      coach.className = "coach good";
+      coach.textContent = "Done. The phone shows the result when it finishes listening.";
+    });
+  </script>
+</body>
+</html>

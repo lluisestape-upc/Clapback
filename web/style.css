@@ -250,3 +250,81 @@ details.trace li { margin: 6px 0; }
 .ar-height label { flex: 1; background: rgb(0 0 0 / 55%); border-radius: 14px; padding: 8px 12px; }
 .ar-height input { width: 5em; font: inherit; margin-left: 8px; border-radius: 8px; border: 0; padding: 6px; }
 .ar-cancel { background: none; border: 0; color: #fff; opacity: .85; text-decoration: underline; font: inherit; padding: 8px; }
+
+/* Measure: clap or sweep */
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--line); padding: 4px; border-radius: 14px; margin: 6px 0 14px; }
+.segmented button {
+  border: 0; border-radius: 11px; background: none; color: var(--fg); font: inherit; font-weight: 700;
+  padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; line-height: 1.25;
+}
+.segmented button small { font-weight: 400; font-size: 12.5px; color: var(--muted); }
+.segmented button[aria-checked="true"] { background: var(--surface); box-shadow: var(--shadow); }
+#howto-sweep .row { margin-bottom: 4px; }
+#src-help b { word-break: break-all; }
+
+/* Verdict: the key figure */
+.figure { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0 2px; }
+.figure b { display: block; font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.figure .target b { font-size: 20px; line-height: 1.3; color: var(--muted); }
+.figure span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.verdict p.definition { font-size: 13px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.actions.static { position: static; background: none; }
+
+/* Charts */
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 10.5px; font-family: inherit; font-variant-numeric: tabular-nums; }
+.chart text.axis-title { font-size: 11px; fill: var(--fg); opacity: .75; }
+.chart text.tag { font-size: 10px; fill: var(--fg); opacity: .7; }
+.chart line.grid { stroke: var(--line); stroke-width: 1; }
+.chart line.schroeder { stroke: var(--fg); stroke-dasharray: 3 3; opacity: .55; }
+.chart line.stem { stroke-width: 2; stroke-linecap: round; }
+.chart rect.zone { fill: var(--good); opacity: .16; }
+.chart rect.bar { fill: var(--accent); }
+.chart rect.bar-after { fill: var(--good); }
+.chart rect.modal-zone { fill: var(--accent); opacity: .07; }
+.chart path.curve { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.chart path.response { stroke: var(--fg); stroke-width: 1.6; }
+.chart path.etc { fill: none; stroke: var(--muted); stroke-width: 1; opacity: .45; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); margin: 8px 0 4px; }
+.chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.chart-legend i.etc-key { background: var(--muted); opacity: .45; height: 2px; vertical-align: 3px; }
+.chart-legend i.after-key { background: var(--good); }
+.card h3[data-from]::after { content: attr(data-from); display: block; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+canvas.spec { width: 100%; height: 220px; display: block; border-radius: 8px; }
+#modes-card .row { margin-top: 10px; }
+
+/* ISO table */
+#iso-card summary { cursor: pointer; font-weight: 700; font-size: 17px; }
+#iso-card details[open] summary { margin-bottom: 8px; }
+.table-wrap { overflow-x: auto; margin: 0 -4px; }
+table.iso { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+table.iso th, table.iso td { padding: 6px 5px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.iso th:first-child { text-align: left; color: var(--muted); font-weight: 600; }
+table.iso thead th { color: var(--muted); font-weight: 600; }
+a.download { display: block; text-align: center; margin-top: 12px; text-decoration: none; padding: 12px; border-radius: 14px; }
+
+/* Camera measure (tilt): live camera, a cross in the middle, panels on top */
+.card-btn.alt { background: var(--surface); color: var(--fg); border: 1.5px solid var(--line); margin-top: -8px; }
+.measure {
+  position: fixed; inset: 0; z-index: 20; background: #000; color: #fff; display: flex; flex-direction: column;
+  justify-content: space-between; padding: calc(16px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));
+  font: 17px/1.4 system-ui, sans-serif;
+}
+.measure video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
+.measure .ar-top, .measure .ar-bottom { position: relative; }
+.measure-cross { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; pointer-events: none; }
+.measure-cross::before, .measure-cross::after {
+  content: ""; position: absolute; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 50%); border-radius: 1px;
+}
+.measure-cross::before { left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; }
+.measure-cross::after { top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; }
+.measure-cross.steady::before, .measure-cross.steady::after { background: #69db7c; }
+.measure-panel, .measure-summary { background: rgb(0 0 0 / 60%); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.measure-value, .measure-result { margin: 0; font-size: 22px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+.measure-stature { font-size: 14px; opacity: .85; }
+.measure-stature input { width: 4.5em; font: inherit; margin-left: 8px; border-radius: 8px; border: 0; padding: 4px 6px; }
+button.link { background: none; border: 0; color: #fff; text-decoration: underline; font: inherit; font-size: 15px; padding: 0; opacity: .9; }
+.ar-cross { display: none; }
+.ar-overlay.aiming .ar-cross { display: block; }
+.ar-height { flex-wrap: wrap; }
+.ar-height .ar-mark { flex: 1 1 100%; }

@@ -47,9 +47,13 @@
     <!-- 2. Room size -->
     <section class="screen" data-screen="room" hidden>
       <h2>How big is it?</h2>
-      <button class="card-btn" id="btn-scan" hidden>
-        <strong>Scan it with the camera</strong>
-        <span>Point at each corner of the floor. Takes about a minute.</span>
+      <button class="card-btn" id="btn-measure" hidden>
+        <strong>Measure it with the camera</strong>
+        <span>Aim at where each wall meets the floor. Five taps, any phone.</span>
+      </button>
+      <button class="card-btn alt" id="btn-scan" hidden>
+        <strong>Scan the floor corners in AR</strong>
+        <span>Tap each corner through the camera. Any room shape, needs ARCore.</span>
       </button>
       <p class="sub">Pick the closest size, then adjust. Rough numbers are fine.</p>
       <div class="presets" id="presets"></div>
@@ -75,18 +79,32 @@
       <div class="actions"><button class="primary" data-next>Continue</button></div>
     </section>
 
-    <!-- 4. Clap -->
+    <!-- 4. Measure: clap or test sweep -->
     <section class="screen" data-screen="clap" hidden>
-      <h2>Time to clap</h2>
-      <ol class="howto">
+      <h2>Measure the room</h2>
+      <div class="segmented" role="radiogroup" aria-label="Measurement">
+        <button data-mode="clap" role="radio" aria-checked="true">Clap<small>Quick, just the phone</small></button>
+        <button data-mode="sweep" role="radio" aria-checked="false">Test sweep<small>Accurate, needs a speaker</small></button>
+      </div>
+      <ol class="howto" id="howto-clap">
         <li>Stand near the middle of the room.</li>
         <li>Hold the phone at chest height, an arm's length away.</li>
         <li>Ask everyone to stay quiet for 5 seconds.</li>
       </ol>
+      <div id="howto-sweep" hidden>
+        <p class="sub small">A 6-second tone rising from 40 Hz to 16 kHz. It measures every
+        band, bass included, with far more signal than a clap, and gives the room's
+        impulse response and frequency response.</p>
+        <div class="row" role="radiogroup" aria-label="Speaker" id="sweep-src">
+          <button class="chip" data-src="bt" aria-pressed="true">Speaker connected to this phone</button>
+          <button class="chip" data-src="other" aria-pressed="false">Another device plays it</button>
+        </div>
+        <ol class="howto" id="src-help"></ol>
+      </div>
       <div class="permission" id="mic-explainer">
         <strong>Clapback needs your microphone.</strong>
-        It records 5 seconds, only after you tap, and sends the clip to the
-        Clapback server to measure it. Nothing records in the background.
+        It records only after you tap and sends the clip to the Clapback server
+        to measure it. Nothing records in the background.
       </div>
       <div class="clap-stage">
         <button class="clap-btn" id="btn-record" type="button">
@@ -97,8 +115,8 @@
         <p class="coach" id="clap-coach" aria-live="polite"></p>
       </div>
       <div class="actions">
-        <button class="secondary" id="btn-retry" hidden>Clap again</button>
-        <button class="primary" data-next id="clap-next" disabled>See my room</button>
+        <button class="secondary" id="btn-retry" hidden>Measure again</button>
+        <button class="primary" data-next id="clap-next" disabled>See results</button>
       </div>
     </section>
 
@@ -109,16 +127,42 @@
       <div class="card next-card" id="next-card" hidden>
         <strong>Want a sharper result?</strong>
         <p id="next-text"></p>
-        <button class="secondary" id="btn-next-clap">Clap once more</button>
+        <button class="secondary" id="btn-next-clap">Measure once more</button>
       </div>
+      <dl class="stats" id="stats"></dl>
       <div class="card" id="rt-card" hidden>
-        <h3>How long the echo lasts</h3>
-        <p class="sub small">Per pitch, from low to high. The shaded band is the target for your use.</p>
-        <div id="rt-chart"></div>
+        <h3>Reverberation time per band</h3>
+        <p class="sub small" id="rt-help">RT60 in each octave band. The green band is the target range for your use.</p>
+        <div class="chart" id="rt-chart"></div>
       </div>
-      <div class="card" id="bass-card" hidden>
-        <h3>Notes that may boom</h3>
-        <p class="sub small">The room's shape makes these bass notes ring louder than the rest.</p>
+      <div class="card" id="decay-card" hidden>
+        <h3>Decay curves</h3>
+        <p class="sub small">Energy left in the room after the sound, per octave band
+        (Schroeder integration). A steeper line means a shorter RT60; a bend means two
+        decay rates, often a flutter echo or a coupled space.</p>
+        <div class="chart" id="decay-chart"></div>
+        <div class="chart-legend" id="decay-legend"></div>
+      </div>
+      <div class="card" id="spec-card" hidden>
+        <h3>Spectrogram of the decay</h3>
+        <p class="sub small">Each frequency dying away over time; brighter is louder.
+        Long streaks at the bottom are room modes ringing on.</p>
+        <canvas class="spec" id="spec" aria-label="Spectrogram of the decay"></canvas>
+      </div>
+      <div class="card" id="response-card" hidden>
+        <h3>Frequency response</h3>
+        <p class="sub small">Level at the mic per frequency, smoothed to 1/6 octave. It
+        includes the speaker, so read the shape: peaks and dips below the Schroeder
+        frequency come from the room's modes.</p>
+        <div class="chart" id="response-chart"></div>
+      </div>
+      <div class="card" id="modes-card" hidden>
+        <h3>Room modes</h3>
+        <p class="sub small" id="modes-help">Frequencies the room's dimensions resonate at.
+        Axial modes (between two opposite walls) are the strongest. Below the Schroeder
+        frequency they are far enough apart to be heard as boomy notes.</p>
+        <div class="chart" id="modes-chart"></div>
+        <div class="chart-legend" id="modes-legend"></div>
         <div class="row" id="bass-notes"></div>
       </div>
       <div class="card" id="understood-card" hidden>
@@ -142,7 +186,16 @@
         </div>
         <p class="sub small" id="map-help"></p>
       </div>
-      <dl class="stats" id="stats"></dl>
+      <div class="card" id="iso-card" hidden>
+        <details>
+          <summary>All values (ISO 3382-1)</summary>
+          <p class="sub small">EDT, T20 and T30 are reverberation times from different parts
+          of the decay. C50 and C80 compare early to late sound (higher is clearer); D50
+          is the share of energy in the first 50 ms.</p>
+          <div id="iso-table"></div>
+          <a class="secondary download" id="ir-download" hidden download="clapback-impulse-response.wav">Download impulse response (WAV)</a>
+        </details>
+      </div>
 
       <div class="card fix" id="fix-card" hidden>
         <h3>Fix it</h3>
@@ -152,7 +205,7 @@
         <button class="primary" id="btn-plan">Make my plan</button>
         <div id="plan" aria-live="polite"></div>
       </div>
-      <div class="actions">
+      <div class="actions static">
         <button class="secondary" id="btn-restart">Measure another room</button>
       </div>
     </section>

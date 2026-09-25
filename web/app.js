@@ -2,7 +2,12 @@
 // One task per screen; every step builds the same Room JSON (clapback/room.py).
 import { openMic, recordClap, quickQuality } from "./capture.js";
 import { arSupported, startScan } from "./scan.js";
+import { motionSupported, startMeasure } from "./measure.js";
 import { showRoom, showGrid, showSource, modalGrid, RAMPS } from "./room3d.js";
+import { SWEEP, playSweep } from "./sweep.js";
+import {
+  rtChart, decayChart, bandLegend, drawSpectrogram, modesChart, modeLegend, responseChart, isoTable,
+} from "./charts.js";
 
 const $ = (id) => document.getElementById(id);
 const SCREENS = ["welcome", "goal", "room", "surfaces", "clap", "results"];
@@ -15,7 +20,9 @@ const state = {
   answers: { floor: null, walls: null, ceiling: null, furnishing: null, windows: null },
   notes: "",
   clap: null,              // last clap: { quality, settings, upload }
-  claps: [],               // every good clap this session (uploads)
+  claps: [],               // every good measurement this session (clap or sweep)
+  mode: "clap",            // "clap" or "sweep"
+  src: "bt",               // sweep played by a speaker on this phone, or by "other" device
   budget: 150,
 };
 
@@ -118,6 +125,27 @@ function renderDims() {
 }
 
 arSupported().then((ok) => { $("btn-scan").hidden = !ok; });
+$("btn-measure").hidden = !motionSupported();
+
+const stored = (k, fallback) => { try { return localStorage.getItem(k) ?? fallback; } catch { return fallback; } };
+const store = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+
+$("btn-measure").addEventListener("click", async () => {
+  try {
+    const r = await startMeasure({ stature: +stored("clapback.stature", 1.7) });
+    store("clapback.stature", r.stature);
+    state.scanned = null;
+    state.dims = { length: r.length, width: r.width, height: r.height };
+    document.querySelectorAll("[data-preset]").forEach((x) => x.setAttribute("aria-pressed", false));
+    $("btn-measure").querySelector("strong").textContent = "Measured ✓  Measure again";
+    renderDims();
+  } catch (err) {
+    if (err?.message === "cancelled") return;
+    alert(err?.message === "no motion sensor"
+      ? "This phone doesn't report its tilt, so the camera can't measure. Type the sizes below instead."
+      : "The camera didn't start. Allow it in the browser's site settings, or type the sizes below.");
+  }
+});
 $("btn-scan").addEventListener("click", async () => {
   try {
     const room = await startScan({ defaultHeight: state.dims.height });
@@ -232,10 +260,59 @@ function buildSurfaces(room) {
   return out;
 }
 
-// ---------- clap ----------
+// ---------- measure: clap or test sweep ----------
 
 let mic = null;
 let busy = false;
+
+const SRC_HELP = {
+  bt: [
+    "Connect a Bluetooth speaker to this phone and put it at least 2 m away, at ear height.",
+    "Set the phone's volume to about three quarters.",
+    "Stand in the listening spot, tap, and stay quiet until it finishes (about 11 s).",
+  ],
+  other: [
+    `On a laptop or a second phone, open <b>${location.host}/speaker.html</b>.`,
+    "Put it at least 2 m from you, volume at about three quarters.",
+    "Tap here first, then press Play on the other device within 4 seconds. Stay quiet until this phone finishes.",
+  ],
+};
+
+function idleLabel() { return state.mode === "clap" ? "Tap, then clap" : "Tap to measure"; }
+
+function setMode(mode) {
+  state.mode = mode;
+  document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-checked", b.dataset.mode === mode));
+  $("howto-clap").hidden = mode !== "clap";
+  $("howto-sweep").hidden = mode !== "sweep";
+  $("src-help").innerHTML = SRC_HELP[state.src].map((t) => `<li>${t}</li>`).join("");
+  if (!busy) {
+    $("btn-record").className = "clap-btn";
+    $("clap-label").textContent = idleLabel();
+  }
+}
+document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+$("sweep-src").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-src]");
+  if (!b) return;
+  state.src = b.dataset.src;
+  document.querySelectorAll("[data-src]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  setMode("sweep");
+});
+
+async function ensureMic(coach) {
+  try {
+    mic ??= await openMic();
+    $("mic-explainer").hidden = true;
+    return true;
+  } catch {
+    coach.className = "coach bad";
+    coach.textContent = "Microphone blocked. Allow it in the browser's site settings, then try again.";
+    return false;
+  }
+}
+
+function measure() { return state.mode === "clap" ? doClap() : doSweep(); }
 
 async function doClap() {
   if (busy) return;
@@ -244,15 +321,7 @@ async function doClap() {
   coach.className = "coach"; coach.textContent = "";
   $("btn-retry").hidden = true;
 
-  try {
-    mic ??= await openMic();
-    $("mic-explainer").hidden = true;
-  } catch {
-    coach.className = "coach bad";
-    coach.textContent = "Microphone blocked. Allow it in the browser's site settings, then try again.";
-    busy = false;
-    return;
-  }
+  if (!(await ensureMic(coach))) { busy = false; return; }
 
   // Recording starts during the countdown, so the first second captures the
   // room's background noise before the clap.
@@ -279,28 +348,92 @@ async function doClap() {
   $("btn-retry").hidden = false;
   $("clap-next").disabled = q.level === "bad";
 
-  state.clap = { quality: q, settings, upload: upload(blob, settings) };
+  state.clap = { kind: "clap", quality: q, settings, upload: upload("/api/clap", blob, settings).then((r) => r.json) };
   if (q.level !== "bad") state.claps.push(state.clap);
   busy = false;
 }
 
-async function upload(blob, settings) {
+// The recording starts first; the sweep plays 0.5 s later (from this phone)
+// or whenever the user presses Play on the other device. The server finds
+// it by deconvolution, so the timing doesn't need to be exact.
+async function doSweep() {
+  if (busy) return;
+  busy = true;
+  const btn = $("btn-record"), label = $("clap-label"), coach = $("clap-coach");
+  coach.className = "coach"; coach.textContent = "";
+  $("btn-retry").hidden = true;
+  if (!(await ensureMic(coach))) { busy = false; return; }
+
+  const seconds = SWEEP.seconds + (state.src === "bt" ? 4.5 : 9);
+  const recording = recordClap(mic, {
+    seconds, bits: 16,
+    onLevel: (v) => { $("meter-fill").style.width = `${Math.round(v * 100)}%`; },
+  });
+  btn.className = "clap-btn listening";
+  coach.textContent = state.src === "bt"
+    ? "Playing the sweep. Stay quiet until it finishes."
+    : "Press Play on the other device now. Stay quiet until this finishes.";
+  const t0 = performance.now();
+  const tick = setInterval(() => {
+    label.textContent = `Listening… ${Math.max(0, Math.ceil(seconds - (performance.now() - t0) / 1000))} s`;
+  }, 200);
+  if (state.src === "bt") { await sleep(500); playSweep().catch(() => {}); }
+
+  const { blob, settings } = await recording;
+  clearInterval(tick);
+  $("meter-fill").style.width = "0%";
+  btn.className = "clap-btn countdown";
+  label.textContent = "Analysing…";
+
+  const up = await upload("/api/sweep", blob, settings, SWEEP);
+  btn.className = "clap-btn done";
+  $("btn-retry").hidden = false;
+  if (!up.json) {
+    label.textContent = "Try again";
+    coach.className = "coach bad";
+    coach.textContent = up.error ?? "Couldn't reach the server. Check the connection.";
+    busy = false;
+    return;
+  }
+  const mid = up.json.decay.filter((b) => b.band_hz === 500 || b.band_hz === 1000);
+  const range = Math.min(...mid.map((b) => b.dynamic_range_db));
+  const lowRate = settings.sampleRate < 32000;
+  const level = up.json.detail.warning || lowRate || range < 35 ? "warn" : "good";
+  label.textContent = "Got it";
+  coach.className = `coach ${level}`;
+  coach.textContent = up.json.detail.warning
+    ?? (lowRate ? "The phone switched the speaker to call mode, so the recording is low quality. Try another device as the speaker."
+      : range < 35 ? `Usable, with ${Math.round(range)} dB of range. A louder speaker or a quieter room will be more accurate.`
+        : `Clean measurement: ${Math.round(range)} dB of decay range in the mid bands.`);
+  state.clap = { kind: "sweep", quality: { level }, settings, upload: Promise.resolve(up.json) };
+  state.claps.push(state.clap);
+  $("clap-next").disabled = false;
+  busy = false;
+}
+
+async function upload(url, blob, settings, extra = {}) {
   const form = new FormData();
   form.append("mic", JSON.stringify(settings));
-  form.append("audio", blob, "clap.wav");
+  form.append("audio", blob, "recording.wav");
   form.append("room", JSON.stringify(currentRoom()));
   form.append("goal", state.goal ?? "");
   form.append("notes", state.notes);
-  const res = await fetch("/api/clap", { method: "POST", body: form });
-  return res.ok ? res.json() : null;
+  for (const [k, v] of Object.entries(extra)) form.append(k, v);
+  try {
+    const res = await fetch(url, { method: "POST", body: form });
+    if (res.ok) return { json: await res.json() };
+    const body = await res.json().catch(() => ({}));
+    return { json: null, error: typeof body.detail === "string" ? body.detail : null };
+  } catch {
+    return { json: null, error: null };
+  }
 }
 
-$("btn-record").addEventListener("click", doClap);
-$("btn-retry").addEventListener("click", doClap);
+$("btn-record").addEventListener("click", measure);
+$("btn-retry").addEventListener("click", measure);
 
 // ---------- results ----------
 
-const BAND_LABELS = { 125: "Low", 250: "", 500: "", 1000: "Mid", 2000: "", 4000: "High" };
 const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
 function noteName(f) {
@@ -308,47 +441,120 @@ function noteName(f) {
   return `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const avg = (v) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
+
 async function renderResults() {
   const room = currentRoom();
   showRoom($("view3d"), room);
-  const q = state.clap?.quality;
   const goal = GOALS.find((g) => g.id === state.goal);
   const v = $("verdict");
+  const cards = ["rt-card", "decay-card", "spec-card", "response-card", "modes-card", "next-card",
+    "understood-card", "iso-card", "fix-card"];
+  for (const id of cards) $(id).hidden = true;
+  $("stats").innerHTML = "";
+  $("plan").innerHTML = "";
 
-  if (!state.clap) {
+  if (!state.claps.length) {
     v.className = "verdict";
-    v.innerHTML = `<span class="badge warn">No clap yet</span><p>Go back one step and clap.</p>`;
+    v.innerHTML = `<span class="badge warn">No measurement yet</span><p>Go back one step and measure.</p>`;
     return;
   }
 
   v.className = "verdict";
-  v.innerHTML = `<div class="spinner" aria-hidden="true"></div><p>Listening back to your clap…</p>`;
-  for (const id of ["rt-card", "bass-card", "next-card", "understood-card", "fix-card"]) $(id).hidden = true;
-  $("plan").innerHTML = "";
+  v.innerHTML = `<div class="spinner" aria-hidden="true"></div><p>Analysing the measurements…</p>`;
 
   const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
   const res = uploads.length ? await api("/api/analyze", {
     room, goal: state.goal ?? "", notes: state.notes, claps: uploads.map((u) => u.decay),
+    kinds: uploads.map((u) => u.kind),
   }) : null;
   if (!res) {
     v.innerHTML = `<span class="badge bad">Couldn't reach the server</span>
-      <p>Check the connection and clap again.</p>`;
+      <p>Check the connection and measure again.</p>`;
     return;
   }
   state.analysis = res;
 
+  // Charts of the decay come from one measurement: the latest sweep if
+  // there is one (cleaner), otherwise the latest clap.
+  const shown = [...uploads].reverse().find((u) => u.kind === "sweep") ?? uploads.at(-1);
+  const nClaps = uploads.filter((u) => u.kind !== "sweep").length;
+  const nSweeps = uploads.length - nClaps;
+  const counts = [nSweeps && plural(nSweeps, "sweep"), nClaps && plural(nClaps, "clap")].filter(Boolean).join(" + ");
+
   const vd = res.verdict;
+  const q = state.clap?.quality ?? { level: "good" };
   v.className = `verdict ${vd.level}`;
   v.innerHTML = `
-    <span class="badge ${q.level}">${goal ? goal.title : "Your room"} · ${res.claps} clap${res.claps > 1 ? "s" : ""}</span>
+    <span class="badge ${q.level}">${goal ? goal.title : "Your room"} · ${counts}</span>
     <h3>${vd.headline}</h3>
+    ${res.rt_mid_s ? `
+    <div class="figure">
+      <div><b>${res.rt_mid_s.toFixed(2)} s</b><span>RT60, 500 Hz–1 kHz</span></div>
+      <div class="target"><b>${vd.range_s[0].toFixed(2)}–${vd.range_s[1].toFixed(2)} s</b><span>Target · ${vd.source}</span></div>
+    </div>
+    ${gauge(res.rt_mid_s, vd.range_s)}` : ""}
     <p>${vd.detail}</p>
-    ${res.rt_mid_s ? gauge(res.rt_mid_s, vd.target_s) : ""}`;
+    <p class="definition">RT60 (reverberation time): how long a sound takes to fade by 60 dB once it stops.</p>`;
 
   if (res.next?.action === "clap") {
     $("next-text").textContent = res.next.instruction;
     $("next-card").hidden = false;
   }
+
+  const mid = (k) => avg(res.bands.filter((b) => b.band_hz === 500 || b.band_hz === 1000).map((b) => b[k]).filter((x) => x != null));
+  const c50 = mid("c50_db"), d50 = mid("d50");
+  const stats = [
+    ["C50 · speech clarity", c50 != null ? `${c50 > 0 ? "+" : ""}${c50.toFixed(1)} dB` : "–"],
+    ["D50 · definition", d50 != null ? `${Math.round(d50 * 100)} %` : "–"],
+    ["Volume", `${res.volume_m3?.toFixed(0) ?? "–"} m³`],
+    ["Schroeder frequency", res.schroeder_hz ? `${res.schroeder_hz} Hz` : "–"],
+  ];
+  if (res.mid_spread_pct != null) stats.push(["Measurements agree", `±${(res.mid_spread_pct / 2).toFixed(0)} %`]);
+  $("stats").innerHTML = stats.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join("");
+
+  if (res.bands?.some((b) => b.rt_s)) {
+    $("rt-chart").innerHTML = rtChart(res.bands, vd.range_s, null, nSweeps > 0);
+    const faded = !nSweeps && res.bands.some((b) => b.rt_s && b.band_hz < 250 && b.n < 2);
+    $("rt-help").textContent = "RT60 in each octave band. The green band is the target range for your use." +
+      (faded ? " Faded bars: one measurement is less certain this low; measure again or use the sweep." : "");
+    $("rt-card").hidden = false;
+  }
+
+  const d = shown?.detail;
+  const from = shown?.kind === "sweep" ? "the sweep" : "your last clap";
+  if (d?.edc) {
+    $("decay-chart").innerHTML = decayChart(d.edc, d.etc);
+    $("decay-legend").innerHTML = bandLegend(Object.keys(d.edc.db).map(Number));
+    $("decay-card").hidden = false;
+  }
+  if (d?.spectrogram?.level?.length) {
+    $("spec-card").hidden = false;
+    state.spectrogram = d.spectrogram;
+    drawSpectrogram($("spec"), d.spectrogram);   // the card is visible now, so it has a width
+  }
+  if (d?.response) {
+    $("response-chart").innerHTML = responseChart(d.response, res.schroeder_hz);
+    $("response-card").hidden = false;
+  }
+  if (res.modes?.length) {
+    $("modes-chart").innerHTML = modesChart(res.modes, res.schroeder_hz, d?.response);
+    $("modes-legend").innerHTML = modeLegend(!!d?.response);
+    $("bass-notes").innerHTML = (res.bass_notes ?? []).slice(0, 6).map((b) => `
+      <span class="note-chip"><b>${Math.round(b.freq_hz)} Hz</b>
+      <small>≈ ${noteName(b.freq_hz)}${b.count > 1 ? ", stacked" : ""}</small></span>`).join("");
+    $("modes-card").hidden = false;
+  }
+  for (const id of ["decay-card", "spec-card"]) {
+    $(id).querySelector("h3").dataset.from = `From ${from}`;
+  }
+
+  $("iso-table").innerHTML = isoTable(res.bands);
+  const dl = $("ir-download");
+  dl.hidden = !d?.ir_wav;
+  if (d?.ir_wav) dl.href = `data:audio/wav;base64,${d.ir_wav}`;
+  $("iso-card").hidden = false;
 
   const u = res.understood;
   if (u && (u.extras.length || u.unknown.length)) {
@@ -358,25 +564,6 @@ async function renderResults() {
     $("understood-card").hidden = false;
   }
 
-  if (res.bands?.some((b) => b.rt_s)) {
-    $("rt-chart").innerHTML = rtChart(res.bands, vd.target_s);
-    $("rt-card").hidden = false;
-  }
-  if (res.bass_notes?.length) {
-    $("bass-notes").innerHTML = res.bass_notes.slice(0, 6).map((b) => `
-      <span class="note-chip"><b>${Math.round(b.freq_hz)} Hz</b>
-      <small>≈ ${noteName(b.freq_hz)}${b.count > 1 ? ", stacked" : ""}</small></span>`).join("");
-    $("bass-card").hidden = false;
-  }
-
-  const stats = [
-    ["Echo time (mid)", res.rt_mid_s ? `${res.rt_mid_s.toFixed(2)} s` : "–"],
-    ["Target", `${vd.target_s.toFixed(2)} s`],
-    ["Volume", `${res.volume_m3?.toFixed(0) ?? "–"} m³`],
-    ["Claps agree", res.mid_spread_pct != null ? `±${(res.mid_spread_pct / 2).toFixed(0)} %` : "1 clap"],
-  ];
-  $("stats").innerHTML = stats.map(([k, val]) => `<div><dt>${k}</dt><dd>${val}</dd></div>`).join("");
-
   if (res.rt_mid_s) $("fix-card").hidden = false;
 
   if (res.maps) {
@@ -385,6 +572,13 @@ async function renderResults() {
     setLayer(state.layer ?? "sti");
   }
 }
+
+// Canvas pixels don't scale with CSS; redraw after a rotation or resize.
+let redraw = 0;
+addEventListener("resize", () => {
+  clearTimeout(redraw);
+  redraw = setTimeout(() => { if (state.spectrogram && !$("spec-card").hidden) drawSpectrogram($("spec"), state.spectrogram); }, 150);
+});
 
 // ---------- map layers ----------
 
@@ -496,7 +690,8 @@ function renderPlan(p) {
   return `
     <div class="before-after"><span>${p.before_mid_s.toFixed(2)} s</span><span class="arrow">→</span>
       <span class="after">${p.after_mid_s.toFixed(2)} s</span></div>
-    ${gauge(p.after_mid_s, p.target_s)}
+    <div class="chart">${rtChart(state.analysis.bands, state.analysis.verdict.range_s, p.predicted_rt_s, true)}</div>
+    <div class="chart-legend"><span><i style="background:var(--accent)"></i>Measured</span><span><i class="after-key"></i>Predicted after the plan</span></div>
     ${items}
     <p class="plan-summary">${esc(p.summary)}</p>
     ${trace}
@@ -517,7 +712,7 @@ function esc(s) {
 
 $("btn-next-clap").addEventListener("click", () => {
   $("btn-record").className = "clap-btn";
-  $("clap-label").textContent = "Tap, then clap";
+  $("clap-label").textContent = idleLabel();
   $("clap-coach").className = "coach";
   $("clap-coach").textContent = $("next-text").textContent;
   $("btn-retry").hidden = true;
@@ -525,41 +720,16 @@ $("btn-next-clap").addEventListener("click", () => {
   go(SCREENS.indexOf("clap"));
 });
 
-// Horizontal scale 0 .. 2×target (at least 1.5 s), green zone = target ±20 %.
-function gauge(rt, target) {
-  const max = Math.max(1.5, target * 2.5, rt * 1.1);
+// Horizontal scale from 0; the green zone is the target range.
+function gauge(rt, [lo, hi]) {
+  const max = Math.max(1.5, hi * 2, rt * 1.1);
   const pct = (x) => `${Math.min(100, (x / max) * 100).toFixed(1)}%`;
   return `
-    <div class="gauge" role="img" aria-label="Echo time ${rt.toFixed(2)} seconds, target ${target.toFixed(2)}">
-      <div class="zone" style="left:${pct(target * 0.8)};width:calc(${pct(target * 1.2)} - ${pct(target * 0.8)})"></div>
+    <div class="gauge" role="img" aria-label="RT60 ${rt.toFixed(2)} seconds, target ${lo.toFixed(2)} to ${hi.toFixed(2)}">
+      <div class="zone" style="left:${pct(lo)};width:calc(${pct(hi)} - ${pct(lo)})"></div>
       <div class="dot" style="left:${pct(rt)}"></div>
     </div>
-    <div class="gauge-labels"><span>Dry</span><span>Echoey</span></div>`;
-}
-
-function rtChart(bands, target) {
-  const W = 320, H = 150, pad = { l: 30, r: 8, t: 10, b: 30 };
-  const vals = bands.map((b) => b.rt_s ?? 0);
-  const max = Math.max(target * 1.5, ...vals) * 1.1;
-  const y = (s) => pad.t + (H - pad.t - pad.b) * (1 - s / max);
-  const bw = (W - pad.l - pad.r) / bands.length;
-  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent");
-
-  const ticks = [0, max / 2, max].map((s) =>
-    `<text x="${pad.l - 6}" y="${y(s) + 4}" text-anchor="end">${s.toFixed(1)}</text>`).join("");
-  const zone = `<rect x="${pad.l}" y="${y(target * 1.2)}" width="${W - pad.l - pad.r}"
-    height="${y(target * 0.8) - y(target * 1.2)}" fill="#2f9e44" opacity=".18" rx="4"/>`;
-  const bars = bands.map((b, i) => {
-    const x = pad.l + i * bw + bw * 0.18;
-    const unsure = b.band_hz < 250;       // one clap is unreliable this low
-    const label = `<text x="${x + bw * 0.32}" y="${H - 12}" text-anchor="middle">${b.band_hz >= 1000 ? b.band_hz / 1000 + "k" : b.band_hz}</text>
-      <text x="${x + bw * 0.32}" y="${H}" text-anchor="middle">${BAND_LABELS[b.band_hz] ?? ""}</text>`;
-    if (!b.rt_s) return label;
-    return `<rect x="${x}" y="${y(b.rt_s)}" width="${bw * 0.64}" height="${y(0) - y(b.rt_s)}"
-      rx="4" fill="${accent}" opacity="${unsure ? 0.4 : 1}"><title>${b.band_hz} Hz: ${b.rt_s.toFixed(2)} s</title></rect>${label}`;
-  }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Echo time per frequency band">${ticks}${zone}${bars}</svg>
-    <p class="sub small">Seconds. Faded bars are less certain from a single clap.</p>`;
+    <div class="gauge-labels"><span>Dry</span><span>Reverberant</span></div>`;
 }
 
 $("btn-restart").addEventListener("click", () => {
