@@ -382,7 +382,7 @@ async function doSweep() {
   const { blob, settings } = await recording;
   clearInterval(tick);
   $("meter-fill").style.width = "0%";
-  btn.className = "clap-btn countdown";
+  btn.className = "clap-btn busy";
   label.textContent = "Analysing…";
 
   const up = await upload("/api/sweep", blob, settings, SWEEP);

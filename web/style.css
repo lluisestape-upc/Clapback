@@ -157,6 +157,7 @@ textarea {
 .clap-btn.listening .pulse { animation: ripple 1.2s ease-out infinite; }
 .clap-btn.listening { background: var(--good); box-shadow: 0 10px 30px rgb(47 158 68 / 35%); }
 .clap-btn.countdown { background: var(--fg); color: var(--bg); font-size: 64px; }
+.clap-btn.busy { background: var(--fg); color: var(--bg); }
 .clap-btn.done { background: var(--surface); color: var(--fg); border: 3px solid var(--good); box-shadow: none; }
 .clap-label { position: relative; padding: 0 20px; display: block; line-height: 1.2; }
 .meter { width: 220px; height: 8px; background: var(--line); border-radius: 4px; margin-top: 22px; overflow: hidden; }
