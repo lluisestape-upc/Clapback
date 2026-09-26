@@ -90,7 +90,7 @@ export function decayChart(edc, etc) {
 }
 
 export function bandLegend(bands) {
-  return bands.map((b) => `<span><i style="background:${BAND_COLORS[b]}"></i>${hz(b)} Hz</span>`).join("") +
+  return bands.map((b) => `<span><i style="background:${BAND_COLORS[b]}"></i>${b >= 1000 ? `${b / 1000} kHz` : `${b} Hz`}</span>`).join("") +
     `<span><i class="etc-key"></i>Raw energy</span>`;
 }
 

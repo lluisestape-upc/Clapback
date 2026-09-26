@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="14">
+  <rect width="640" height="300" rx="16" fill="#ffffff"/>
+  <!-- room: floor, ceiling, wall -->
+  <line x1="40" y1="250" x2="560" y2="250" stroke="#1d1b18" stroke-width="2"/>
+  <line x1="40" y1="40" x2="560" y2="40" stroke="#1d1b18" stroke-width="2"/>
+  <line x1="560" y1="40" x2="560" y2="250" stroke="#1d1b18" stroke-width="3"/>
+  <text x="572" y="150" fill="#6b665e">wall</text>
+  <text x="48" y="270" fill="#6b665e">floor</text>
+  <text x="48" y="32" fill="#6b665e">ceiling</text>
+  <!-- person with the phone at height h -->
+  <circle cx="110" cy="112" r="11" fill="#e6e0d6"/>
+  <line x1="110" y1="124" x2="110" y2="200" stroke="#cfc6b8" stroke-width="10" stroke-linecap="round"/>
+  <line x1="110" y1="200" x2="100" y2="248" stroke="#cfc6b8" stroke-width="8" stroke-linecap="round"/>
+  <line x1="110" y1="200" x2="120" y2="248" stroke="#cfc6b8" stroke-width="8" stroke-linecap="round"/>
+  <rect x="128" y="104" width="6" height="22" rx="2" fill="#d9480f"/>
+  <!-- horizon from the phone -->
+  <line x1="134" y1="115" x2="560" y2="115" stroke="#6b665e" stroke-dasharray="4 4"/>
+  <!-- rays to the floor line and to the ceiling line -->
+  <line x1="134" y1="115" x2="560" y2="250" stroke="#d9480f" stroke-width="2.5"/>
+  <line x1="134" y1="115" x2="560" y2="40" stroke="#1c7ed6" stroke-width="2.5"/>
+  <circle cx="560" cy="250" r="5" fill="#d9480f"/>
+  <circle cx="560" cy="40" r="5" fill="#1c7ed6"/>
+  <!-- angles -->
+  <path d="M 214 115 A 80 80 0 0 1 210.3 139" fill="none" stroke="#d9480f" stroke-width="2"/>
+  <text x="222" y="140" fill="#d9480f">θ</text>
+  <path d="M 214 115 A 80 80 0 0 0 212.8 101" fill="none" stroke="#1c7ed6" stroke-width="2"/>
+  <text x="222" y="104" fill="#1c7ed6">θ′</text>
+  <!-- h and d -->
+  <line x1="150" y1="115" x2="150" y2="250" stroke="#2f9e44" stroke-width="2"/>
+  <text x="158" y="200" fill="#2f9e44" font-weight="700">h</text>
+  <line x1="134" y1="275" x2="560" y2="275" stroke="#2f9e44" stroke-width="2"/>
+  <line x1="134" y1="268" x2="134" y2="282" stroke="#2f9e44" stroke-width="2"/>
+  <line x1="560" y1="268" x2="560" y2="282" stroke="#2f9e44" stroke-width="2"/>
+  <text x="340" y="292" fill="#2f9e44" font-weight="700" text-anchor="middle">d</text>
+  <!-- formulas -->
+  <rect x="176" y="200" width="200" height="45" rx="8" fill="#f6f3ee"/>
+  <text x="188" y="218" fill="#1d1b18">d = h / tan θ</text>
+  <text x="188" y="238" fill="#1d1b18">ceiling = h + d · tan θ′</text>
+</svg>

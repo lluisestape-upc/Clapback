@@ -564,7 +564,8 @@ async function renderResults() {
     $("understood-card").hidden = false;
   }
 
-  if (res.rt_mid_s) $("fix-card").hidden = false;
+  // Every treatment absorbs, so a room that is already too dry gets no plan.
+  if (res.rt_mid_s && vd.level !== "too_dead") $("fix-card").hidden = false;
 
   if (res.maps) {
     showSource($("view3d"), res.maps.source);
@@ -682,7 +683,7 @@ function renderPlan(p) {
     : "";
   const tries = p.trace.filter((s) => s.tool);
   const trace = tries.length ? `
-    <details class="trace"><summary>How it decided (${tries.length} tries)</summary><ol>
+    <details class="trace"><summary>How it decided (${plural(tries.length, "try").replace("trys", "tries")})</summary><ol>
       ${tries.map((s) => `<li>${s.tool === "finish" ? "Final: " : "Tried "}${
         s.treatments.map((t) => `${t.area_m2} m² ${t.id.replace("_", " ")} (${t.where})`).join(" + ") || "nothing"} → ${
         s.result.valid ? `${s.result.predicted_mid_s} s, €${s.result.cost_eur}` : `rejected: ${esc(s.result.errors[0])}`}</li>`).join("")}

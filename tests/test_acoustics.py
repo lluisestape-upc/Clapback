@@ -65,6 +65,19 @@ def test_no_clap_gives_no_rt():
     assert all(b.rt_s is None for b in decay.analyze(x, 48000))
 
 
+def test_talking_before_the_clap_is_not_the_clap():
+    # a second of loud noise (someone talking), silence, then the clap at 2.5 s
+    rng = np.random.default_rng(4)
+    fs = 48000
+    talk = rng.standard_normal(fs) * 0.25
+    gap = rng.standard_normal(int(1.5 * fs)) * 1e-4
+    x, _ = synthetic_clap(0.6)
+    x = np.concatenate([talk, gap, x[int(0.5 * fs):]])
+    assert decay.find_onset(x, fs) == pytest.approx(2.5 * fs, abs=0.03 * fs)
+    b = {d.band_hz: d for d in decay.analyze(x, fs)}[1000]
+    assert b.rt_s == pytest.approx(0.6, rel=0.10)
+
+
 def test_onset_is_found():
     x, fs = synthetic_clap(0.5)
     assert decay.find_onset(x, fs) == pytest.approx(0.5 * fs, abs=0.02 * fs)

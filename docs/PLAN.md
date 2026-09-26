@@ -1,17 +1,23 @@
 # Plan
 
-## Status (2026-09-25)
+## Status (2026-09-26)
 
-Built: typed + AR room input, clap capture, acoustics engine (decay, modes,
-Sabine/Eyring, calibration, targets), STI/C50 and bass maps in 3D, the three
-Nemotron agents with fallbacks, Tavily product links. 35 tests.
+Live at https://clapback-alpha.vercel.app (Vercel Hobby, free).
+
+Built: room size typed, measured with the camera and tilt (any phone), or
+scanned in AR (tested on the phone); clap and test-sweep measurement;
+acoustics engine (decay, ISO 3382-1 values, sweep deconvolution, modes,
+Sabine/Eyring, calibration, targets); charts (RT60 per band, decay curves,
+spectrogram, frequency response, modes, ISO table, plan before/after);
+STI and bass maps in 3D; the three Nemotron agents with fallbacks; Tavily
+shop links. 54 tests. The README explains all of it.
 
 Still open:
-- **Validate RT from a clap against a reference** (REW sweep or a room with a
-  known RT60). Real phone claps are consistent (0.33–0.37 s, T20 ≈ T30) and
-  the phone applies no voice processing, but the absolute value is unverified.
-- Test the AR scan on the phone (can't be tested in a desktop browser).
-- Tavily key, deploy somewhere public for the Devpost demo URL, the video.
+- **Validate against a reference instrument** (measurement mic + REW, or a
+  room with a certified RT60). Real phone claps agree with each other
+  (0.67 / 0.69 s), and the sweep matches synthetic rooms within 10 %, but
+  the absolute value on a real phone is unverified.
+- Real room before/after for the video; the video; Devpost text.
 
 Deadline: 2026-10-30 10:00 PDT (19:00 Barcelona). Target submission: 10-29.
 

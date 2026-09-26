@@ -68,19 +68,23 @@ def _frames_db(x: np.ndarray, fs: int, frame_s: float = FRAME_S) -> np.ndarray:
     return 10 * np.log10(p + 1e-20)
 
 
+ONSET_BACK_FRAMES = 3  # a clap rises to its peak within ~30 ms
+
+
 def find_onset(x: np.ndarray, fs: int) -> int:
     """Sample index where the clap starts.
 
-    First 10 ms frame that rises 20 dB above the background and is within
-    20 dB of the loudest frame, minus one frame of safety.
+    The rise into the loudest 10 ms frame, minus one frame of safety. Taking
+    the loudest event (not the first loud one) keeps talking or a knock
+    before the clap from being analysed as the clap.
     """
     db = _frames_db(x, fs)
     if db.size == 0:
         return 0
-    noise = np.percentile(db, 20)
-    peak = db.max()
-    thresh = max(noise + 20, peak - 20)
-    i = int(np.argmax(db >= thresh))
+    p = int(np.argmax(db))
+    i = p
+    while i > max(0, p - ONSET_BACK_FRAMES) and db[i - 1] >= db[p] - 20:
+        i -= 1
     hop = int(fs * FRAME_S)
     return max(0, (i - 1) * hop)
 

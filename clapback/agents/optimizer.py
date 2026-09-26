@@ -23,6 +23,7 @@ from ..acoustics import treat
 from ..acoustics.treat import Treatment
 from ..llm import nemotron
 from ..room import OCTAVE_BANDS_HZ, Room
+from ..targets import TOLERANCE
 
 log = logging.getLogger("uvicorn.error")
 
@@ -38,7 +39,7 @@ class Plan(BaseModel):
     predicted_rt_s: list[float]
     summary: str
     trace: list[dict]
-    source: str  # "nemotron" or "fallback"
+    source: str  # "nemotron", "fallback", or "engine" (no model needed)
 
 
 TREATMENTS_SCHEMA = {
@@ -95,6 +96,16 @@ Rules:
 def run(room: Room, goal: str, measured_rt: list[float | None], target_s: float,
         budget_eur: float, bass_notes: list[dict] | None = None) -> Plan:
     before = treat.mid(treat.predict(room, measured_rt, []))
+    if before < target_s * (1 - TOLERANCE):
+        # Already drier than the target: every item in the catalogue absorbs,
+        # so the only honest plan is none. No model call.
+        rt = treat.predict(room, measured_rt, [])
+        return Plan(
+            treatments=[], cost_eur=0, before_mid_s=round(before, 2), after_mid_s=round(before, 2),
+            target_s=round(target_s, 2), predicted_rt_s=[round(t, 2) for t in rt], trace=[], source="engine",
+            summary=(f"The room is already drier than the {target_s:.2f} s target ({before:.2f} s now). "
+                     "Everything on this list absorbs sound and would make it drier, so there is nothing to buy."),
+        )
     trace: list[dict] = []
     try:
         plan, summary = _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes or [], trace)

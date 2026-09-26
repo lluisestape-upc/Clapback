@@ -64,6 +64,13 @@ def test_optimizer_falls_back_when_the_model_fails(monkeypatch):
     assert plan.summary
 
 
+def test_a_dry_room_gets_no_plan_and_no_model_call(monkeypatch):
+    monkeypatch.setattr(nemotron, "chat", lambda *a, **kw: pytest.fail("no model call needed"))
+    plan = optimizer.run(room(), "music", [0.4] * 6, target_s=0.9, budget_eur=300)
+    assert plan.treatments == [] and plan.source == "engine"
+    assert "drier" in plan.summary
+
+
 def test_intake_drops_invented_materials():
     res = intake.IntakeResult(extras=[
         intake.Extra(material="bookshelf_filled", area_m2=4, what="bookshelf"),
