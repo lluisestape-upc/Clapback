@@ -565,7 +565,10 @@ async function renderResults() {
   }
 
   // Every treatment absorbs, so a room that is already too dry gets no plan.
-  if (res.rt_mid_s && vd.level !== "too_dead") $("fix-card").hidden = false;
+  if (res.rt_mid_s && vd.level !== "too_dead") {
+    $("fix-card").hidden = false;
+    loadPrices();   // shops take a few seconds; start while the results are read
+  }
 
   if (res.maps) {
     showSource($("view3d"), res.maps.source);
@@ -656,14 +659,45 @@ $("budgets").addEventListener("click", (e) => {
   });
 });
 
+// ---------- real prices (Tavily finds, Nemotron reads, the engine checks) ----------
+
+let pricesPromise = null;
+
+function loadPrices() {
+  if (pricesPromise) return pricesPromise;
+  $("price-status").textContent = "Looking up real products in shops with Tavily…";
+  pricesPromise = fetch("/api/prices")
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .then((d) => { showPriceStatus(d); return d; });
+  return pricesPromise;
+}
+
+// The cheapest checked product per treatment type.
+function bestOffers(d) {
+  const out = {};
+  for (const [tid, r] of Object.entries(d?.items ?? {})) if (r.offers?.length) out[tid] = r.offers[0];
+  return out;
+}
+
+function showPriceStatus(d) {
+  const found = Object.keys(bestOffers(d)).length, kinds = Object.keys(d?.items ?? {}).length;
+  $("price-status").textContent = !d?.enabled
+    ? "Typical prices: the shop search is off."
+    : found
+      ? `Real products found for ${found} of ${kinds} kinds of treatment, each price and size checked against the shop's page.${found < kinds ? " The rest use typical prices." : ""}`
+      : "No shop prices could be checked right now, so the plan uses typical prices.";
+}
+
 $("btn-plan").addEventListener("click", async () => {
   const out = $("plan"), btn = $("btn-plan");
   btn.disabled = true;
-  out.innerHTML = `<div class="spinner" aria-hidden="true"></div><p class="sub small">Nemotron is trying options; the engine checks each one…</p>`;
+  out.innerHTML = `<div class="spinner" aria-hidden="true"></div><p class="sub small">Checking shop prices, then Nemotron tries options and the engine checks each one…</p>`;
   const uploads = (await Promise.all(state.claps.map((c) => c.upload))).filter(Boolean);
+  const prices = await loadPrices();
   const p = await api("/api/plan", {
     room: currentRoom(), goal: state.goal ?? "", notes: state.notes,
-    claps: uploads.map((u) => u.decay), budget_eur: state.budget,
+    claps: uploads.map((u) => u.decay), budget_eur: state.budget, offers: bestOffers(prices),
   });
   btn.disabled = false;
   if (!p) { out.innerHTML = `<p class="coach bad">Couldn't make a plan. Try again.</p>`; return; }
@@ -672,14 +706,24 @@ $("btn-plan").addEventListener("click", async () => {
 
 const WHERE = { wall: "on the walls", floor: "on the floor", ceiling: "on the ceiling", window: "over the window" };
 
+function planItem(t) {
+  const where = `${+t.area_m2.toFixed(2)} m² ${WHERE[t.where] ?? t.where}`;
+  const pr = t.product;
+  if (!pr) return `<li><div>${esc(t.name)}<span>${where} · typical price</span></div><b>€${t.cost_eur}</b></li>`;
+  const buy = `${pr.buys} × €${pr.price_eur.toFixed(2)}${pr.pieces > 1 ? ` (pack of ${pr.pieces})` : ""}`;
+  const drape = t.id === "curtain" ? ", hung at double fullness" : pr.thickness_cm ? `, ${+pr.thickness_cm.toFixed(1)} cm thick` : "";
+  return `<li><div>
+      <a class="product" href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.name)}</a>
+      <span>${buy} · ${where}${drape}</span>
+      <details class="quote"><summary>${esc(pr.site)}: price and size as quoted</summary>
+        ${pr.evidence.map((e) => `<q>${esc(e)}</q>`).join("")}</details>
+    </div><b>€${t.cost_eur}</b></li>`;
+}
+
 function renderPlan(p) {
   const items = p.treatments.length
-    ? `<ul class="plan-items">${p.treatments.map((t) => `
-        <li><div>${esc(t.name)}<span>${t.area_m2} m² ${WHERE[t.where] ?? t.where}</span>${
-          t.products?.length ? `<span class="shop">${t.products.slice(0, 2).map((x) =>
-            `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.site)}</a>`).join(" · ")}</span>` : ""
-        }</div><b>€${t.cost_eur}</b></li>`).join("")}
-      </ul><div class="plan-total"><span>Total</span><span>€${p.cost_eur}</span></div>`
+    ? `<ul class="plan-items">${p.treatments.map(planItem).join("")}</ul>
+      <div class="plan-total"><span>Total</span><span>€${p.cost_eur}</span></div>`
     : "";
   const tries = p.trace.filter((s) => s.tool);
   const trace = tries.length ? `

@@ -69,13 +69,16 @@ def chat_json(
     The schema is also put in the system prompt, so this works even if the
     endpoint ignores response_format.
     """
-    system = {
-        "role": "system",
-        "content": "Answer with a single JSON object matching this JSON Schema, and nothing else:\n"
-        + json.dumps(schema.model_json_schema()),
-    }
+    fmt = ("Answer with a single JSON object matching this JSON Schema, and nothing else:\n"
+           + json.dumps(schema.model_json_schema()))
+    # One system message: with two, Nemotron follows the first and loses the
+    # instructions in the second.
+    if messages and messages[0]["role"] == "system":
+        messages = [{"role": "system", "content": messages[0]["content"] + "\n\n" + fmt}, *messages[1:]]
+    else:
+        messages = [{"role": "system", "content": fmt}, *messages]
     resp = chat(
-        [system, *messages],
+        messages,
         model=model,
         max_tokens=max_tokens,
         thinking=thinking,

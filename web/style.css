@@ -329,3 +329,11 @@ button.link { background: none; border: 0; color: #fff; text-decoration: underli
 .ar-overlay.aiming .ar-cross { display: block; }
 .ar-height { flex-wrap: wrap; }
 .ar-height .ar-mark { flex: 1 1 100%; }
+
+/* Real prices */
+.price-status { font-size: 13.5px; color: var(--muted); margin: 0 0 12px; }
+.plan-items a.product { color: var(--fg); font-weight: 600; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+details.quote { margin-top: 4px; font-size: 13px; color: var(--muted); }
+details.quote summary { cursor: pointer; color: var(--accent); }
+details.quote q { display: block; margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--line); font-style: italic; }
+details.quote q::before, details.quote q::after { content: none; }

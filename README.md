@@ -8,7 +8,9 @@ give its size, tap what it's made of, and measure it: with a hand clap for a
 quick answer, or with a test sweep from a speaker for an accurate one. It
 reports the reverberation time against the target from the standards, draws
 the charts an acoustician would look at, maps speech clarity and bass over
-the floor in 3D, and plans a treatment that fits your budget.
+the floor in 3D, and plans a treatment that fits your budget, priced with
+real products that Tavily finds in shops and the engine checks against each
+shop's page.
 
 **Live app:** https://clapback-alpha.vercel.app (installable on Android and
 desktop; open it on a phone for the microphone and camera features).
@@ -35,6 +37,7 @@ Factory**, and it never produces an acoustic number (see [The rule](#the-rule)).
   - [Room model and calibration](#room-model-and-calibration)
   - [Room modes, maps and targets](#room-modes-maps-and-targets)
   - [Treatment plans](#treatment-plans)
+  - [Real prices from shops (Tavily)](#real-prices-from-shops-tavily)
   - [Measuring the room with the camera](#measuring-the-room-with-the-camera)
 - [NVIDIA Nemotron on Nebius Token Factory](#nvidia-nemotron-on-nebius-token-factory)
 - [Accuracy and tests](#accuracy-and-tests)
@@ -190,13 +193,20 @@ reverb.
 
 <img src="docs/images/plan.png" width="360" align="right" alt="Treatment plan">
 
-Pick a budget and Nemotron tries plans against a priced catalogue with tool
-calls, while the acoustics engine validates and scores every one. The result
-shows the RT60 per band before and after against the target, the items with
-their cost, shop links found by Tavily, a short explanation, and "How it
-decided": every plan Nemotron tried and what the engine said about it. A
-room that is already too dry gets no plan, since everything in the catalogue
-absorbs sound.
+Pick a budget and Nemotron tries plans with tool calls, while the acoustics
+engine validates and scores every one. The prices are real: while you read
+the results, Tavily finds products in Spanish shops, Nemotron reads their
+pages, and the engine keeps only the ones whose price and size it can find
+on the page ([how](#real-prices-from-shops-tavily)). The plan then comes in
+whole products, "16 × €10.00 curtains", with a link to each and the passage
+from the shop's page that shows its price and size.
+
+The result shows the RT60 per band before and after against the target, the
+products and their cost, a short explanation, and "How it decided": every
+plan Nemotron tried and what the engine said about it. In this example the
+real prices made rugs and curtains cheaper than panels, so the plan reaches
+the target for €219. A room that is already too dry gets no plan, since
+everything on the list absorbs sound.
 
 <br clear="right">
 
@@ -215,7 +225,8 @@ flowchart LR
     F[decay.py<br>bands, Schroeder, EDT/T20/T30,<br>C50/C80/D50, chart data]
     G[reverb.py, modes.py, maps.py,<br>targets.py, treat.py]
     H[Nemotron 3 Super on Nebius<br>intake, planner, optimizer]
-    T[Tavily product search]
+    T[Tavily Search + Extract<br>shop pages]
+    P[shopper: Nemotron reads the pages<br>shop.py: checks every number<br>against the page]
   end
   C --> F
   D --> E --> F
@@ -223,7 +234,7 @@ flowchart LR
   A -. notes .-> H
   H -- material ids, tool calls --> G
   G -- scores, predictions --> H
-  H --> T
+  T --> P -- real €/m² --> H
   G --> R[Results: verdict, charts, 3D maps, plan]
 ```
 
@@ -384,10 +395,58 @@ T_{\mathrm{new}} = \frac{0.161\,V}{A_{\mathrm{now}} + \Delta A + 4mV}$$
 Validation checks each item's placement (a rug goes on the floor, curtains
 over glass or on a wall), its area against what the room has (each item can
 cover at most a set fraction of its surfaces, and curtains no more glass
-than there is), and the total against the budget. The catalogue
-(`data/treatments.json`) has rough planning prices: 5 cm panels at €30/m²,
-10 cm panels at €50/m², heavy curtains at €25/m², a thick rug with underlay
-at €30/m², and a filled bookshelf at €60/m².
+than there is), and the total against the budget. Prices per m² come from
+real products (next section); the catalogue (`data/treatments.json`) keeps
+typical prices for any type without one: 5 cm panels at €30/m², 10 cm
+panels at €50/m², heavy curtains at €25/m², a thick rug with underlay at
+€30/m², and a filled bookshelf at €60/m².
+
+After Nemotron finishes, `shop.to_units` rounds each item to whole
+purchases of the real product, removes purchases while the plan is over
+budget or over the space, and the engine predicts the result again from the
+final areas.
+
+### Real prices from shops (Tavily)
+
+`clapback/shop.py` and `clapback/agents/shopper.py`. The app calls
+`/api/prices` as soon as the results show, and it takes about 10–30 s, so
+the prices are usually ready before you press *Make my plan*. For each of
+the five treatment types:
+
+1. **Tavily Search**, twice in parallel, both returning the page text: an
+   advanced search limited to shops whose product pages carry a fixed price
+   and a size (IKEA, JYSK, Kave Home, Conforama, Zara Home for rugs,
+   curtains and shelves; acoustic shops for panels), and an open search
+   biased to Spain. Marketplaces, sites that block extraction, and country
+   domains outside the euro area are dropped. For 5 cm panels two shop
+   pages with fixed prices per size are always read too, since searches for
+   panels mostly find "from €X" configurators.
+2. **Tavily Extract** fetches the text of the results that came back
+   without it. Only pages that show a price in euros and a size are kept,
+   up to six.
+3. **Nemotron reads each page separately** (one call per page, in parallel;
+   with several pages at once it tended to return nothing). It copies, it
+   doesn't compute: the name, the price exactly as written, the size numbers
+   and their unit as written, the pieces per pack, and one to three passages
+   copied from the page that show them.
+4. **The engine checks every product** (`shop.verify`):
+   - every passage must be on the page, character for character (after
+     collapsing whitespace);
+   - the price must be on the page and in a passage, and every size, pack
+     and thickness number must be in a passage;
+   - panels must have the treatment's thickness (3.5–7 cm for "5 cm",
+     8–15 cm for "10 cm");
+   - the engine converts mm and m to cm and works out the price per m² of
+     treated surface, which must be plausible for the kind of product.
+     Curtains count half their fabric, because the absorption data for heavy
+     curtains assumes them hung at double fullness.
+5. The cheapest checked product of each type prices the plan. Results are
+   cached for six hours per server instance.
+
+Without a Tavily key, or when no product of a type passes, that type uses
+the catalogue's typical price and the plan says so next to the item. A
+discovery for all five types uses about 25 Tavily credits and roughly 30
+short Nemotron calls.
 
 ### Measuring the room with the camera
 
@@ -422,7 +481,7 @@ All model calls go through Nebius Token Factory's OpenAI-compatible API
 | Intake | Turns the user's own words into material ids and areas | Only ids from `data/materials.json`; unknown ids dropped and shown back as "not counted"; areas clamped to the room | `agents/intake.py` |
 | Planner | After each measurement, decides whether another is worth it and says where to stand | Hard limits in code: at least 2 claps, at most 4; a sweep ends it | `agents/planner.py` |
 | Optimizer | Tool-calling loop with `try_plan` and `finish`, against a priced catalogue and a budget | Every plan validated and scored by `acoustics/treat.py`; forced `finish` on the last turn; greedy fallback; no call at all when the room is already too dry | `agents/optimizer.py` |
-| Products | Tavily, not a model: one web search per treatment type for shop links | Only https results; cached; off without a key | `products.py` |
+| Shopper | Reads shop pages found by Tavily: product name, price as written, size and unit as written, pieces per pack, and passages copied from the page | Every passage checked against the page and every number against the passages; the engine converts units and computes the price per m²; thickness and price per m² must fit the product type | `agents/shopper.py`, `shop.py` |
 
 What shaped the design:
 
@@ -433,6 +492,11 @@ What shaped the design:
 - Nemotron 3 Nano was tried first for intake. It mapped "a closed wardrobe"
   to 6 m² of carpet, while Super flags it as unknown, so every agent uses
   Super.
+- Sending one shop page per call made the shopper reliable. With every page
+  in one prompt it often returned an empty list, even for a page that plainly
+  said "MORUM alfombra 200x300 cm 79,99€".
+- Two system messages confuse it: it follows the first. `chat_json` puts the
+  JSON schema and the instructions in one system message.
 - A full session (3 claps with notes, then a plan) measured **9 Super calls,
   about 10.4k input and 1k output tokens, about 15 s in total**. At Token
   Factory's per-token prices that is well under a cent per room.
@@ -442,8 +506,8 @@ What shaped the design:
 
 ## Accuracy and tests
 
-`pytest` runs 54 tests: the engine on synthetic signals with known answers,
-the agents with the model faked, and the API.
+`pytest` runs 77 tests: the engine on synthetic signals with known answers,
+the agents with the model faked, the price checks, and the API.
 
 | What | Result |
 |---|---|
@@ -456,6 +520,9 @@ the agents with the model faked, and the API.
 | Frequency response of a bare delta | flat within ±1 dB, 100 Hz–10 kHz |
 | Loud talking one second before the clap | onset still on the clap, RT within 10 % |
 | No sweep in the recording, or a sweep cut off | rejected with a message |
+| A shop price or size that isn't in the page's text | rejected |
+| A 5 cm panel offered as a 10 cm one, or €5,400 for a pack of panels | rejected |
+| Prices written as `1.234,56 €`, `€70,95`, `4,490.00`, `1 299 €` | read correctly |
 
 On a real phone, two claps in the same room give mid-frequency RTs of 0.67
 and 0.69 s (3 % apart), with the phone applying no voice processing. The
@@ -527,7 +594,7 @@ Environment variables (`.env`):
 |---|---|---|
 | `NEBIUS_API_KEY` | for the agents | Nemotron on Nebius Token Factory; without it every agent uses its fallback |
 | `NEBIUS_BASE_URL` | no | defaults to `https://api.tokenfactory.nebius.com/v1` |
-| `TAVILY_API_KEY` | no | shop links in the plan |
+| `TAVILY_API_KEY` | no | real product prices in the plan; without it the plan uses typical prices |
 | `CLAPBACK_LLM_PER_HOUR` | no | model-backed requests per IP per hour, default 40 |
 | `CLAPBACK_RECORDINGS` | no | where recordings are saved with their context (default `recordings/`, `/tmp/recordings` on Vercel) |
 
@@ -549,7 +616,8 @@ vercel deploy --prod
 | `POST /api/clap` | multipart: `audio` (WAV), `room` (JSON), `goal`, `notes`, `mic` (applied settings) | per-band EDT/T20/T30/C50/C80/D50, decay curves, energy-time curve, spectrogram, and the report for this clap |
 | `POST /api/sweep` | as above, plus `f1`, `f2`, `seconds` | as above, plus the frequency response, the impulse response as a base64 WAV, and where the sweep was found; 422 with a reason if there's no whole sweep |
 | `POST /api/analyze` | JSON: `room`, `goal`, `notes`, `claps` (per-band results of each measurement), `kinds` | averaged bands, verdict and target, modes, maps, what the notes added (Nemotron), and whether to measure again (Nemotron) |
-| `POST /api/plan` | as `/api/analyze`, plus `budget_eur` | treatments with cost and shop links, RT per band before and after, summary, and the trace of tried plans |
+| `GET /api/prices` | | per treatment type: pages read, products proposed, verified and rejected (with the reasons), and the three cheapest verified products with their passages |
+| `POST /api/plan` | as `/api/analyze`, plus `budget_eur` and `offers` (the chosen product per treatment type, from `/api/prices`) | treatments in whole products with cost and the product's link and passages, RT per band before and after, summary, and the trace of tried plans |
 | `POST /api/room` | a room | volume and areas, or 422 for an unknown material |
 | `GET /api/materials` | | the materials table |
 | `GET /api/health` | | `{"ok": true}` |
@@ -566,7 +634,7 @@ clapback/
   room.py        room model (floor polygon, height, surfaces, patches)
   materials.py   absorption table loader
   targets.py     target RT per use and the verdict
-  products.py    Tavily product search
+  shop.py        real prices: Tavily search and extract, checks, whole products
   acoustics/
     decay.py     onset, bands, noise floor, Schroeder, EDT/T20/T30, C50/C80/D50, chart data
     sweep.py     exponential sine sweep, deconvolution, frequency response, IR export
@@ -574,7 +642,7 @@ clapback/
     modes.py     room modes, Schroeder frequency, boomy notes
     maps.py      STI estimate, modal pressure, C50 (Barron)
     treat.py     treatment validation, cost and prediction, greedy plan
-  agents/        intake, planner, optimizer (Nemotron)
+  agents/        intake, planner, optimizer, shopper (Nemotron)
   llm/           Nebius Token Factory client
 web/             the app, no build step
   app.js         flow and results

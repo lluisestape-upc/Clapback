@@ -40,6 +40,11 @@ def catalogue() -> dict[str, dict]:
     return {t["id"]: t for t in raw["treatments"]}
 
 
+def price(tid: str, prices: dict[str, float] | None = None) -> float:
+    """€/m²: a real product's price when there is one (shop.py), else the catalogue's."""
+    return (prices or {}).get(tid) or catalogue()[tid]["eur_per_m2"]
+
+
 def _surface_totals(room: Room) -> dict[str, float]:
     walls = sum(room.surface_area("wall", i) for i in range(len(room.floor)))
     window = 0.0
@@ -74,7 +79,8 @@ def baseline_absorption(room: Room, measured_rt: list[float | None]) -> list[flo
     return [a if a is not None else b * k for a, b in zip(measured, model)]
 
 
-def validate(room: Room, plan: list[Treatment], budget_eur: float | None = None) -> list[str]:
+def validate(room: Room, plan: list[Treatment], budget_eur: float | None = None,
+             prices: dict[str, float] | None = None) -> list[str]:
     cat = catalogue()
     totals = _surface_totals(room)
     errors = []
@@ -96,14 +102,14 @@ def validate(room: Room, plan: list[Treatment], budget_eur: float | None = None)
     for where, area in used.items():
         if area > totals.get(where, 0.0) + 1e-6:
             errors.append(f"treatments on {where} add up to {area:.1f} m², more than its {totals[where]:.1f} m²")
-    if budget_eur is not None and cost(plan) > budget_eur + 1e-6:
-        errors.append(f"plan costs €{cost(plan):.0f}, over the €{budget_eur:.0f} budget")
+    if budget_eur is not None and cost(plan, prices) > budget_eur + 1e-6:
+        errors.append(f"plan costs €{cost(plan, prices):.0f}, over the €{budget_eur:.0f} budget")
     return errors
 
 
-def cost(plan: list[Treatment]) -> float:
+def cost(plan: list[Treatment], prices: dict[str, float] | None = None) -> float:
     cat = catalogue()
-    return sum(cat[t.id]["eur_per_m2"] * t.area_m2 for t in plan if t.id in cat)
+    return sum(price(t.id, prices) * t.area_m2 for t in plan if t.id in cat)
 
 
 def predict(room: Room, measured_rt: list[float | None], plan: list[Treatment]) -> list[float]:
@@ -122,16 +128,16 @@ def mid(rt: list[float]) -> float:
 
 
 def evaluate(room: Room, measured_rt: list[float | None], plan: list[Treatment],
-             target_s: float, budget_eur: float) -> dict:
+             target_s: float, budget_eur: float, prices: dict[str, float] | None = None) -> dict:
     """What the optimizer's tool returns for one proposed plan."""
-    errors = validate(room, plan, budget_eur)
+    errors = validate(room, plan, budget_eur, prices)
     if errors:
         return {"valid": False, "errors": errors}
     rt = predict(room, measured_rt, plan)
     m = mid(rt)
     return {
         "valid": True,
-        "cost_eur": round(cost(plan)),
+        "cost_eur": round(cost(plan, prices)),
         "predicted_rt_s": {f"{b}Hz": round(t, 2) for b, t in zip(OCTAVE_BANDS_HZ, rt)},
         "predicted_mid_s": round(m, 2),
         "target_s": round(target_s, 2),
@@ -140,7 +146,7 @@ def evaluate(room: Room, measured_rt: list[float | None], plan: list[Treatment],
 
 
 def greedy_plan(room: Room, measured_rt: list[float | None], target_s: float, budget_eur: float,
-                step_m2: float = 1.0) -> list[Treatment]:
+                step_m2: float = 1.0, prices: dict[str, float] | None = None) -> list[Treatment]:
     """Deterministic fallback: add 1 m² at a time of whichever allowed
     treatment lowers mid RT most per euro, until the target or the budget."""
     plan: list[Treatment] = []
@@ -152,9 +158,9 @@ def greedy_plan(room: Room, measured_rt: list[float | None], target_s: float, bu
         for c in catalogue().values():
             for where in c["where"]:
                 trial = _merge(plan, Treatment(id=c["id"], where=where, area_m2=step_m2))
-                if validate(room, trial, budget_eur):
+                if validate(room, trial, budget_eur, prices):
                     continue
-                gain = (now - mid(predict(room, measured_rt, trial))) / (c["eur_per_m2"] * step_m2)
+                gain = (now - mid(predict(room, measured_rt, trial))) / (price(c["id"], prices) * step_m2)
                 if gain > best_gain:
                     best, best_gain = trial, gain
         if best is None:

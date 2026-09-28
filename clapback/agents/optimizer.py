@@ -90,11 +90,15 @@ Rules:
   corner placement help, without promising a fix.
 - Try at most 4 plans, then call finish. If the target can't be reached within budget,
   finish with the plan that gets closest and say so honestly.
-- The summary is for a non-expert: what to buy, where, and what will change."""
+- The summary is for a non-expert: what to buy, where, and what will change. Write it
+  without any digits: no reverberation times, areas or prices. The plan is rounded to whole
+  products afterwards, and the app shows the final numbers next to your summary."""
 
 
 def run(room: Room, goal: str, measured_rt: list[float | None], target_s: float,
-        budget_eur: float, bass_notes: list[dict] | None = None) -> Plan:
+        budget_eur: float, bass_notes: list[dict] | None = None,
+        prices: dict[str, float] | None = None, products: dict[str, str] | None = None) -> Plan:
+    """prices: €/m² of real products by treatment id (shop.py), products: their names."""
     before = treat.mid(treat.predict(room, measured_rt, []))
     if before < target_s * (1 - TOLERANCE):
         # Already drier than the target: every item in the catalogue absorbs,
@@ -108,7 +112,8 @@ def run(room: Room, goal: str, measured_rt: list[float | None], target_s: float,
         )
     trace: list[dict] = []
     try:
-        plan, summary = _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes or [], trace)
+        plan, summary = _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes or [], trace,
+                               prices or {}, products or {})
         source = "nemotron"
     except Exception as e:  # noqa: BLE001 - any failure falls back to the greedy plan
         log.warning("optimizer failed: %s", e)
@@ -116,14 +121,14 @@ def run(room: Room, goal: str, measured_rt: list[float | None], target_s: float,
         plan, summary, source = None, "", "fallback"
 
     if plan is None:
-        plan = treat.greedy_plan(room, measured_rt, target_s, budget_eur)
+        plan = treat.greedy_plan(room, measured_rt, target_s, budget_eur, prices=prices)
         summary = summary or _fallback_summary(plan, before, room, measured_rt, target_s)
         source = "fallback"
 
     after_rt = treat.predict(room, measured_rt, plan)
     return Plan(
         treatments=plan,
-        cost_eur=round(treat.cost(plan)),
+        cost_eur=round(treat.cost(plan, prices)),
         before_mid_s=round(before, 2),
         after_mid_s=round(treat.mid(after_rt), 2),
         target_s=round(target_s, 2),
@@ -134,9 +139,10 @@ def run(room: Room, goal: str, measured_rt: list[float | None], target_s: float,
     )
 
 
-def _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes, trace):
+def _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes, trace, prices, products):
     cat = "\n".join(
-        f"- {c['id']}: {c['name']}, {'/'.join(c['where'])}, €{c['eur_per_m2']}/m²"
+        f"- {c['id']}: {c['name']}, {'/'.join(c['where'])}, €{treat.price(c['id'], prices):.0f}/m²"
+        + (f" (a real product: {products[c['id']]})" if c["id"] in products else " (typical price)")
         for c in treat.catalogue().values()
     )
     system = SYSTEM.format(
@@ -172,7 +178,7 @@ def _agent(room, goal, measured_rt, target_s, budget_eur, bass_notes, trace):
                 result = {"valid": False, "errors": [f"bad treatment format: {e}"]}
                 plan = None
             else:
-                result = treat.evaluate(room, measured_rt, plan, target_s, budget_eur)
+                result = treat.evaluate(room, measured_rt, plan, target_s, budget_eur, prices)
             trace.append({"tool": call.function.name, "treatments": args.get("treatments", []), "result": result})
             if call.function.name == "finish" and plan is not None and result.get("valid"):
                 return plan, args.get("summary", "").strip()

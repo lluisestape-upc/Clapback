@@ -18,7 +18,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import materials, products, targets
+from . import materials, shop, targets
 from .acoustics import decay, maps, modes, reverb, sweep, treat
 from .agents import intake, optimizer, planner
 from .room import Room
@@ -260,8 +260,21 @@ class AnalyzeRequest(BaseModel):
     kinds: list[str] = Field(default_factory=list, max_length=6)  # "clap" / "sweep", same order
 
 
+class OfferIn(BaseModel):
+    """A verified product from /api/prices, sent back by the app."""
+    name: str = Field(max_length=200)
+    url: str = Field(max_length=600, pattern=r"^https://")
+    site: str = Field("", max_length=100)
+    price_eur: float = Field(gt=0, le=10000)
+    pieces: int = Field(1, ge=1, le=500)
+    piece_m2: float = Field(gt=0, le=30)
+    thickness_cm: float | None = None
+    evidence: list[str] = Field(default_factory=list, max_length=3)
+
+
 class PlanRequest(AnalyzeRequest):
     budget_eur: float = Field(150, ge=0, le=5000)
+    offers: dict[str, OfferIn] = Field(default_factory=dict)  # treatment id → product
 
 
 def _claps(req: AnalyzeRequest) -> list[list[decay.BandDecay]]:
@@ -315,9 +328,21 @@ def analyze_session(req: AnalyzeRequest, request: Request) -> dict:
     return out
 
 
+@app.get("/api/prices")
+def real_prices(request: Request) -> dict:
+    """Real products per treatment type, found with Tavily and checked against
+    their pages (shop.py). The app fetches this while the results show and
+    sends the chosen products back with /api/plan."""
+    if not shop.enabled():
+        return {"enabled": False, "items": {}}
+    _rate_limit(request)
+    return {"enabled": True, **shop.prices()}
+
+
 @app.post("/api/plan")
 def make_plan(req: PlanRequest, request: Request) -> dict:
-    """Budgeted treatment plan from Nemotron, scored by the engine."""
+    """Budgeted treatment plan from Nemotron, scored by the engine, priced
+    with real products when the app sends them."""
     _rate_limit(request)
     claps = _claps(req)
     room, _ = _with_intake(req.room, req.notes)
@@ -326,14 +351,36 @@ def make_plan(req: PlanRequest, request: Request) -> dict:
     if not rep["rt_mid_s"]:
         raise HTTPException(422, "no usable measurement yet")
     target = targets.target_rt(req.goal, room.volume())
-    plan = optimizer.run(room, req.goal, measured, target, req.budget_eur, rep.get("bass_notes"))
+
+    # Only offers for known treatments whose price per m² is plausible for
+    # that kind of product; the price per m² is recomputed here.
+    eur_m2 = {tid: o.price_eur / shop.covers_m2(tid, o.pieces, o.piece_m2)
+              for tid, o in req.offers.items() if tid in shop.KINDS}
+    offers = {tid: o for tid, o in req.offers.items()
+              if tid in eur_m2 and shop.KINDS[tid]["eur_m2"][0] <= eur_m2[tid] <= shop.KINDS[tid]["eur_m2"][1]}
+    prices = {tid: eur_m2[tid] for tid in offers}
+    plan = optimizer.run(room, req.goal, measured, target, req.budget_eur, rep.get("bass_notes"),
+                         prices=prices, products={tid: o.name for tid, o in offers.items()})
+
+    buys: dict[str, int] = {}
+    if offers and plan.treatments:
+        fitted, buys = shop.to_units(room, measured, plan.treatments, {k: o.model_dump() for k, o in offers.items()},
+                                     req.budget_eur, prices)
+        after = treat.predict(room, measured, fitted)
+        plan.treatments = fitted
+        plan.cost_eur = round(treat.cost(fitted, prices))
+        plan.after_mid_s = round(treat.mid(after), 2)
+        plan.predicted_rt_s = [round(t, 2) for t in after]
+
     names = {c["id"]: c["name"] for c in treat.catalogue().values()}
     out = plan.model_dump()
-    shop = products.for_plan([t["id"] for t in out["treatments"]])
     for t in out["treatments"]:
+        o = offers.get(t["id"])
         t["name"] = names.get(t["id"], t["id"])
-        t["cost_eur"] = round(treat.catalogue()[t["id"]]["eur_per_m2"] * t["area_m2"])
-        t["products"] = shop.get(t["id"], [])
+        t["cost_eur"] = round(treat.price(t["id"], prices) * t["area_m2"])
+        n = buys.get(f"{t['id']}@{t['where']}")
+        t["product"] = {**o.model_dump(), "buys": n, "units": n * o.pieces} if o and n else None
+    out["priced_with"] = "shops" if offers else "typical"
     return out
 
 
