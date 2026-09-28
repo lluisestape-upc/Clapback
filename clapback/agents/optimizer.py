@@ -90,8 +90,8 @@ Rules:
   corner placement help, without promising a fix.
 - Try at most 4 plans, then call finish. If the target can't be reached within budget,
   finish with the plan that gets closest and say so honestly.
-- The summary is for a non-expert: what to buy, where, and what will change. Write it
-  without any digits: no reverberation times, areas or prices. The plan is rounded to whole
+- The summary is for a non-expert: what to buy, where, and what will change. Don't state
+  any quantity, in digits or in words: no reverberation times, areas, counts or prices. The plan is rounded to whole
   products afterwards, and the app shows the final numbers next to your summary."""
 
 
