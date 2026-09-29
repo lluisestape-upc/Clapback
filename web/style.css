@@ -82,7 +82,7 @@ button { font: inherit; }
 .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--accent); opacity: 0; animation: ripple 3s ease-out infinite; }
 .r2 { animation-delay: 1s; } .r3 { animation-delay: 2s; }
 @keyframes ripple { from { transform: scale(.35); opacity: .7; } to { transform: scale(1); opacity: 0; } }
-.facts { list-style: none; padding: 0; margin: 0 auto; text-align: left; max-width: 340px; }
+.facts { list-style: none; padding: 0; margin: 0 auto; text-align: left; max-width: 400px; }
 .facts li { padding: 10px 0 10px 30px; position: relative; color: var(--muted); border-bottom: 1px solid var(--line); }
 .facts li::before { content: ""; position: absolute; left: 4px; top: 17px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent-soft); border: 2px solid var(--accent); }
 .facts strong { color: var(--fg); }
@@ -337,3 +337,7 @@ details.quote { margin-top: 4px; font-size: 13px; color: var(--muted); }
 details.quote summary { cursor: pointer; color: var(--accent); }
 details.quote q { display: block; margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--line); font-style: italic; }
 details.quote q::before, details.quote q::after { content: none; }
+
+/* Welcome: content and button together, centred when there's room */
+.screen[data-screen="welcome"] { justify-content: center; }
+.screen[data-screen="welcome"] .actions { margin-top: 0; padding-top: 28px; }
