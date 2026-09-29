@@ -138,3 +138,9 @@ def test_plan_endpoint_prices_with_the_real_product(monkeypatch):
     assert panels and panels[0]["product"]["units"] % 4 == 0
     assert panels[0]["cost_eur"] == round(panels[0]["product"]["buys"] * 19.90)
     assert out["cost_eur"] <= 300
+    # the 3D view gets where each piece goes, and what that does
+    rects = [r for r in out["placement"]["rects"] if r["id"] == "panel_50"]
+    assert len(rects) == sum(t["product"]["units"] for t in panels)   # walls and ceiling
+    assert all(r["w"] == pytest.approx(0.6) for r in rects)          # the real product's size
+    assert any(p["covered"] for p in out["reflections_after"])
+    assert out["maps_after"]["sti_summary"]["mean"] >= 0

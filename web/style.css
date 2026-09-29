@@ -341,3 +341,21 @@ details.quote q::before, details.quote q::after { content: none; }
 /* Welcome: content and button together, centred when there's room */
 .screen[data-screen="welcome"] { justify-content: center; }
 .screen[data-screen="welcome"] .actions { margin-top: 0; padding-top: 28px; }
+
+/* 3D view */
+.segmented.compact { margin: 4px 0 10px; }
+.segmented.compact button { padding: 6px 10px; font-size: 15px; }
+.bass-view { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
+.slice-z { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.slice-z input { accent-color: var(--accent); }
+.slice-z output { font-variant-numeric: tabular-nums; min-width: 3.5em; color: var(--fg); }
+.refl-list { margin: 4px 0 8px; padding-left: 20px; font-size: 14px; }
+.refl-list li { margin: 6px 0; }
+.refl-list b { font-variant-numeric: tabular-nums; margin-right: 4px; }
+.refl-list span { display: block; color: var(--muted); font-size: 13px; }
+.replay { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.replay .secondary { flex: none; }
+.replay p { margin: 0; }
+.placement h4 { margin: 14px 0 4px; font-size: 16px; }
+.placement ul { margin: 0; padding-left: 20px; font-size: 14.5px; }
+.placement li { margin: 4px 0; }

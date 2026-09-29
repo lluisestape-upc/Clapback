@@ -7,8 +7,9 @@ Clapback is a room-acoustics app for a phone. You say what the room is for,
 give its size, tap what it's made of, and measure it: with a hand clap for a
 quick answer, or with a test sweep from a speaker for an accurate one. It
 reports the reverberation time against the target from the standards, draws
-the charts an acoustician would look at, maps speech clarity and bass over
-the floor in 3D, and plans a treatment that fits your budget, priced with
+the charts an acoustician would look at, shows the room in 3D (where early
+reflections land, where to sit, how a bass note fills the volume, and a
+replay of the clap), and plans a treatment that fits your budget, priced with
 real products that Tavily finds in shops and the engine checks against each
 shop's page.
 
@@ -22,7 +23,7 @@ Factory**, and it never produces an acoustic number (see [The rule](#the-rule)).
 <p align="center">
   <img src="docs/images/result-verdict.png" width="270" alt="Verdict: RT60 against the target range">
   <img src="docs/images/chart-decay.png" width="270" alt="Decay curves per octave band">
-  <img src="docs/images/map-speech.png" width="270" alt="3D map of speech clarity">
+  <img src="docs/images/3d-reflections-plan.png" width="270" alt="3D view: early reflections and the plan in place">
 </p>
 
 ## Contents
@@ -36,6 +37,8 @@ Factory**, and it never produces an acoustic number (see [The rule](#the-rule)).
   - [ISO 3382-1 values](#iso-3382-1-values)
   - [Room model and calibration](#room-model-and-calibration)
   - [Room modes, maps and targets](#room-modes-maps-and-targets)
+  - [Early reflections, placement and where to sit](#early-reflections-placement-and-where-to-sit)
+  - [The clap replay](#the-clap-replay)
   - [Treatment plans](#treatment-plans)
   - [Real prices from shops (Tavily)](#real-prices-from-shops-tavily)
   - [Measuring the room with the camera](#measuring-the-room-with-the-camera)
@@ -161,20 +164,46 @@ impulse response, smoothed to 1/6 octave, with 0 dB at the 500 Hz–2 kHz mean
 microphone, so the useful reading is the shape in the shaded modal region,
 not the absolute level.
 
-### Maps of the room
+### The room in 3D
+
+A 3D model of the room, with the walls lettered A, B, C… (the plan's
+positions refer to them), and four layers. After a plan, a switch shows each
+layer **now** or **with the plan**, with its pieces placed in the room.
 
 <p>
-  <img src="docs/images/map-speech.png" width="360" alt="Speech clarity map">
-  <img src="docs/images/map-bass.png" width="360" alt="Bass map">
+  <img src="docs/images/3d-reflections.png" width="360" alt="Early reflections on the surfaces">
+  <img src="docs/images/3d-reflections-plan.png" width="360" alt="The same with the plan's pieces in place">
 </p>
 
-A 3D model of the room with a map on a plane at ear height (1.2 m):
+- **Reflections.** Where the sound bounces from the source (orange) to the
+  listener (blue) in the first 20 ms, painted on the walls, floor and ceiling,
+  with the strongest paths drawn and listed with their position, delay and
+  level. For a podcast the listener is the mic, 25 cm in front of the talker,
+  who faces the nearest wall (a desk against the wall); otherwise it is the
+  best seat. With the plan, the pieces sit on the hot spots and the list says
+  which reflections they cover and by how much.
+- **Speech clarity.** An STI estimate on a plane at ear height for someone
+  talking from the orange dot, now or with the plan's RT.
+- **Bass.** How loud one low note is, either on a horizontal slice at any
+  height or in the whole volume: red within 3 dB of the loudest point, blue
+  15 dB or more below it, so the lobes and the nodal planes show. The slider
+  or the play button sweeps the note.
+- **Where to sit.** How even the bass is at every spot at ear height, from
+  30 Hz to the Schroeder frequency, with the most even spot at least 0.5 m
+  from the walls marked, and how it compares with a typical spot. It costs
+  nothing and helps rooms that are too dry for a plan too.
 
-- **Speech clarity:** an STI estimate for someone talking from the orange
-  dot, from the measured RT per band and the distance to the talker.
-- **Bass:** how loud one low note is at every point, from the modal sum of
-  a rectangular room. The slider or the play button sweeps the frequency,
-  so the pattern of booms and holes moves across the floor.
+<p>
+  <img src="docs/images/3d-bass-volume.png" width="360" alt="One bass note in the whole volume">
+  <img src="docs/images/3d-seat.png" width="360" alt="Where to sit">
+</p>
+
+**Replay the clap** runs sound particles from the source, bouncing and
+fading at every surface, ten times slower than real, with the level shown
+as they go: now, or with the plan's pieces absorbing with their own
+coefficients ([how](#the-clap-replay)).
+
+<img src="docs/images/3d-replay.png" width="360" alt="Clap replay with the plan's pieces">
 
 ### All values (ISO 3382-1)
 
@@ -382,6 +411,51 @@ f_S = 2000\sqrt{T/V}$$
 | Movies and TV | 0.35 s | common practice for home cinema |
 | Just curious | 0.50 s | a comfortable furnished room |
 
+### Early reflections, placement and where to sit
+
+`clapback/acoustics/geometry.py`.
+
+**Early reflections** by image sources (Allen & Berkley 1979 for boxes,
+Borish 1984 for any polyhedron). The surfaces are the walls of the floor
+polygon, extruded to the ceiling, plus the floor and the ceiling. The
+source mirrored in one surface, or in two in turn, gives a specular path,
+which is real only if every reflection point lies on its surface. Each path
+gets its delay after the direct sound and its level relative to it, with each
+surface's mid-band absorption (patches included, by area):
+
+$$L = 20 \lg \frac{r_{\mathrm{direct}}}{r_{\mathrm{path}}} + 10 \lg \prod_i (1 - \alpha_i)$$
+
+Orders 1 and 2 are kept, down to 20 dB below the strongest. The app paints
+each surface with the power sum of the paths landing on it, spread over
+about a panel's size (σ = 0.3 m).
+
+**Placement.** `place()` turns every item of the plan into pieces of the
+real product's size (or a typical size) and puts them one at a time where
+they cover the most reflection energy, without overlapping: panels on walls
+or ceiling (then around ear height; thick panels also favour corners),
+curtains hanging from a rail, bookshelves standing on the floor, rugs on the
+floor. `reflections_after()` gives each path the absorption of the piece it
+lands on. The plan lists the positions from the lettered walls.
+
+**Where to sit.** For every point of a 0.25 m grid at ear height, the modal
+response of a rectangular room (the same modal sum as the bass map) at 48
+frequencies from 30 Hz to the Schroeder frequency; its standard deviation in
+dB says how uneven the bass is there. The most even point at least 0.5 m
+from every wall is the recommended seat.
+
+### The clap replay
+
+`web/acoustics3d.js`, tested with Node. 1,500 particles leave the source in
+random directions at 343 m/s, reflect specularly off the room's surfaces,
+and keep (1 − α) of their energy at every hit. The surfaces' absorption is
+scaled so the particles decay with the **measured** RT60, which spreads
+furniture and anything else the model misses over the surfaces: first from
+Eyring, then corrected with a quick run of 500 particles, because a box with
+specular reflections decays about 12 % slower than Eyring assumes (the field
+isn't fully diffuse). With the plan, a particle that hits a piece loses that
+piece's absorption instead. Specular particles describe sound above the
+Schroeder frequency; the bass is modal, which the Bass layer shows.
+
 ### Treatment plans
 
 `treat.py` decides whether a plan is allowed and what it would do. The
@@ -506,8 +580,10 @@ What shaped the design:
 
 ## Accuracy and tests
 
-`pytest` runs 77 tests: the engine on synthetic signals with known answers,
-the agents with the model faked, the price checks, and the API.
+`pytest` runs 86 tests: the engine on synthetic signals with known answers,
+the geometry against exact image-source cases, the agents with the model
+faked, the price checks, and the API. One of them runs the JavaScript tests
+of the 3D acoustics with Node (`tests/js/`).
 
 | What | Result |
 |---|---|
@@ -520,6 +596,9 @@ the agents with the model faked, the price checks, and the API.
 | Frequency response of a bare delta | flat within ±1 dB, 100 Hz–10 kHz |
 | Loud talking one second before the clap | onset still on the clap, RT within 10 % |
 | No sweep in the recording, or a sweep cut off | rejected with a message |
+| First- and second-order reflection paths in a box | same points, lengths and delays as the image-source construction by hand |
+| Particles in a box, α = 0.1 / 0.2 / 0.4 | decay 12 % slower than Eyring (1.14 / 0.54 / 0.24 s against 1.02 / 0.48 / 0.21 s) |
+| Particles calibrated to a measured RT of 0.6 s | within 8 % |
 | A shop price or size that isn't in the page's text | rejected |
 | A 5 cm panel offered as a 10 cm one, or €5,400 for a pack of panels | rejected |
 | Prices written as `1.234,56 €`, `€70,95`, `4,490.00`, `1 299 €` | read correctly |
@@ -641,6 +720,7 @@ clapback/
     reverb.py    Sabine/Eyring, air, furnishing, calibration
     modes.py     room modes, Schroeder frequency, boomy notes
     maps.py      STI estimate, modal pressure, C50 (Barron)
+    geometry.py  early reflections (image sources), placement, where to sit
     treat.py     treatment validation, cost and prediction, greedy plan
   agents/        intake, planner, optimizer, shopper (Nemotron)
   llm/           Nebius Token Factory client
@@ -651,10 +731,12 @@ web/             the app, no build step
   charts.js      SVG and canvas charts
   measure.js     camera + tilt room measuring
   scan.js        WebXR AR scan
-  room3d.js      3D room and maps (three.js)
+  room3d.js      the 3D view and its layers (three.js)
+  acoustics3d.js surfaces, heat, modal field in the volume, particles (no drawing; node-tested)
   speaker.html   plays the sweep on a second device
 data/            materials.json, treatments.json
-tests/           pytest: engine, sweep, agents with the model faked, API
+tests/           pytest: engine, sweep, geometry, agents with the model faked, prices, API;
+                 js/ runs with node --test
 docs/            PLAN.md, images/
 scripts/         check_nebius.py
 ```

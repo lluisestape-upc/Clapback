@@ -3,7 +3,10 @@
 import { openMic, recordClap, quickQuality } from "./capture.js";
 import { arSupported, startScan } from "./scan.js";
 import { motionSupported, startMeasure } from "./measure.js";
-import { showRoom, showGrid, showSource, modalGrid, RAMPS } from "./room3d.js";
+import {
+  showRoom, showGrid, showMarkers, showReflections, showTreatments, showCloud, playParticles, clear, modalGrid, RAMPS,
+} from "./room3d.js";
+import { planes, local, surfaceAlpha, calibrate, makeParticles, modalCloud } from "./acoustics3d.js";
 import { SWEEP, playSweep } from "./sweep.js";
 import {
   rtChart, decayChart, bandLegend, drawSpectrogram, modesChart, modeLegend, responseChart, isoTable,
@@ -570,9 +573,11 @@ async function renderResults() {
     loadPrices();   // shops take a few seconds; start while the results are read
   }
 
+  state.plan = null;
+  $("plan-toggle").hidden = true;
   if (res.maps) {
-    showSource($("view3d"), res.maps.source);
     if (res.bass_notes?.length) setFreq(Math.round(res.bass_notes[0].freq_hz));
+    $("slice-z").max = String(Math.max(0.5, room.height - 0.1));
     setLayer(state.layer ?? "sti");
   }
 }
@@ -584,7 +589,17 @@ addEventListener("resize", () => {
   redraw = setTimeout(() => { if (state.spectrogram && !$("spec-card").hidden) drawSpectrogram($("spec"), state.spectrogram); }, 150);
 });
 
-// ---------- map layers ----------
+// ---------- the 3D view ----------
+
+const V3 = () => $("view3d");
+const withPlan = () => state.when !== "now" && !!state.plan?.placement;
+
+const LEGENDS = {
+  sti: ["Hard to follow", "Fair", "Clear"],
+  modal: ["Bass hole", "Even", "Boom"],
+  refl: ["20 dB weaker", "", "Strongest reflection"],
+  even: ["Even bass", "", "Uneven"],
+};
 
 function legend(name) {
   const stops = RAMPS[name];
@@ -592,42 +607,123 @@ function legend(name) {
     const pct = ((v - stops[0][0]) / (stops.at(-1)[0] - stops[0][0])) * 100;
     return `rgb(${c.map((x) => Math.round(x * 255)).join(",")}) ${pct}%`;
   }).join(",");
-  const labels = name === "sti"
-    ? ["Hard to follow", "Fair", "Clear"]
-    : ["Bass hole", "Even", "Boom"];
   return `<div class="bar" style="background:linear-gradient(90deg,${css})"></div>
-    <div class="labels">${labels.map((l) => `<span>${l}</span>`).join("")}</div>`;
+    <div class="labels">${LEGENDS[name].map((l) => `<span>${l}</span>`).join("")}</div>`;
+}
+
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+// "wall B, 1.4 m from the corner with wall A, 1.3 m high" / "floor, 2.1 m from wall A and 1.6 m from wall D"
+function whereOn(room, name, pt) {
+  const pls = planes(room);
+  const pl = pls.find((p) => p.name === name);
+  const walls = pls.filter((p) => p.kind === "wall");
+  if (pl.kind === "wall") {
+    const [u, v] = local(pl, pt);
+    const prev = walls[(pl.index - 1 + walls.length) % walls.length].name;
+    return `${cap(name)}, ${u.toFixed(1)} m from the corner with ${prev}, ${v.toFixed(1)} m high`;
+  }
+  return `${cap(name)}, ${fromWalls(room, { x: pt[0], y: pt[1], z: pt[2] })}`;
+}
+
+function fromWalls(room, p) {
+  const walls = planes(room).filter((q) => q.kind === "wall");
+  const d = (pl) => (p.x - pl.point[0]) * pl.normal[0] + (p.y - pl.point[1]) * pl.normal[1];
+  const a = walls[0], z = walls.at(-1);
+  return `${d(a).toFixed(1)} m from ${a.name} and ${d(z).toFixed(1)} m from ${z.name}`;
+}
+
+function reflList(room, refl, plan) {
+  return refl.slice(0, 5).map((r) => {
+    const lvl = plan ? r.level_after_db : r.level_db;
+    const where = r.surfaces.map((n, k) => whereOn(room, n, r.points[k])).join(", then ");
+    const cover = plan && r.covered ? ` · now covered (was ${r.level_db.toFixed(0)} dB)` : "";
+    return `<li><b>${lvl.toFixed(0)} dB</b> ${esc(where)}<span>${r.delay_ms.toFixed(1)} ms after the direct sound${cover}</span></li>`;
+  }).join("");
 }
 
 function setLayer(name) {
   state.layer = name;
-  const res = state.analysis;
-  if (!res?.maps) return;
+  const res = state.analysis, m = res?.maps;
+  if (!m) return;
+  const el = V3(), room = currentRoom(), plan = withPlan();
   document.querySelectorAll("[data-layer]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.layer === name));
-  $("legend").innerHTML = legend(name);
-  $("bass-ctrl").hidden = name !== "modal";
+  $("bass-ctrl").hidden = $("bass-view").hidden = name !== "modal";
+  $("refl-list").hidden = name !== "refl";
+  clear(el, "refl", "cloud");
+  showGrid(el, null);
+  showTreatments(el, plan ? state.plan.placement.rects : null);
+  showMarkers(el, {
+    source: m.source,
+    listener: name === "refl" ? m.listener : null,
+    seat: name === "seat" ? m.evenness?.seat : null,
+  });
+
   if (name === "sti") {
-    showGrid($("view3d"), res.maps.sti, "sti", res.maps.listener_z);
-    const s = res.maps.sti_summary;
-    $("map-help").textContent = `How easy speech is to follow at ear height, for someone talking from the orange dot. ` +
+    const g = plan && state.plan.maps_after ? state.plan.maps_after : m;
+    showGrid(el, g.sti, "sti", m.listener_z);
+    $("legend").innerHTML = legend("sti");
+    const s = g.sti_summary;
+    $("map-help").textContent = `How easy speech is to follow at ear height for someone talking from the orange dot${plan ? ", with the plan" : ""}. ` +
       `From ${s.min.toFixed(2)} to ${s.max.toFixed(2)} on the 0–1 speech-transmission scale (an estimate for a quiet room).`;
-  } else {
+  } else if (name === "refl") {
+    const refl = plan && state.plan.reflections_after ? state.plan.reflections_after : m.reflections;
+    showReflections(el, room, refl, { after: plan, source: m.source, listener: m.listener });
+    $("legend").innerHTML = legend("refl");
+    $("map-help").textContent = (state.goal === "voice"
+      ? "Where your voice bounces back into the mic (blue) in the first 20 ms, for a talker at the orange dot facing the wall. "
+      : "Where sound from the orange dot bounces to the listening spot (blue) in the first 20 ms. ") +
+      "Hot spots are where a panel does most; the lines are the strongest paths. Levels are relative to the direct sound." +
+      (plan ? " With the plan: the pieces sit on the hot spots, and covered reflections fade." : "");
+    $("refl-list").innerHTML = reflList(room, refl, plan);
+  } else if (name === "modal") {
     drawModal();
+  } else if (name === "seat") {
+    const e = m.evenness;
+    $("legend").innerHTML = e ? legend("even") : "";
+    if (!e) { $("map-help").textContent = "Only for rectangular rooms: the bass model needs a box."; return; }
+    showGrid(el, e.grid, "even", m.listener_z);
+    $("map-help").textContent = `The green ring is where the bass is most even: ${fromWalls(room, e.seat)}. ` +
+      `From 30 to ${e.f_hi_hz} Hz the level there varies by ${e.seat_spread_db} dB, against ${e.median_spread_db} dB at a typical spot in this room. ` +
+      `Put your chair${state.goal === "voice" ? " and mic" : ""} there; it costs nothing.`;
   }
 }
 
 function drawModal() {
-  const res = state.analysis, f = +$("freq").value;
-  const g = modalGrid(currentRoom(), f, res.maps.source, res.maps.rt_low_s || 0.5);
-  showGrid($("view3d"), g, "modal", res.maps.listener_z);
+  const res = state.analysis, f = +$("freq").value, room = currentRoom(), el = V3();
+  const rt = res.maps.rt_low_s || 0.5;
   $("freq-out").textContent = `${f} Hz ≈ ${noteName(f)}`;
-  $("map-help").textContent = "How loud one bass note is around the room. Red spots boom, blue spots lose the note. Slide or press play to sweep.";
+  const whole = state.bassView === "whole";
+  document.querySelectorAll("[data-bassview]").forEach((b) => b.setAttribute("aria-pressed", (b.dataset.bassview === "whole") === whole));
+  $("slice-z-wrap").hidden = whole;
+  $("legend").innerHTML = legend("modal");
+  if (whole) {
+    showGrid(el, null);
+    showCloud(el, modalCloud(room, f, res.maps.source, rt, 0.3));
+    $("map-help").textContent = "One bass note in the whole room: red where it booms (within 3 dB of the loudest point), blue where it nearly disappears (15 dB or more below). Slide, or press play to sweep.";
+  } else {
+    clear(el, "cloud");
+    const z = +$("slice-z").value;
+    $("slice-z-out").textContent = `${z.toFixed(1)} m`;
+    showGrid(el, modalGrid(room, f, res.maps.source, rt, 0.25, z), "modal", z);
+    $("map-help").textContent = `How loud one bass note is at ${z.toFixed(1)} m high. Red spots boom, blue spots lose the note. Slide, or press play to sweep.`;
+  }
 }
 
 function setFreq(f) { $("freq").value = f; }
 
 document.querySelectorAll("[data-layer]").forEach((b) => b.addEventListener("click", () => setLayer(b.dataset.layer)));
+document.querySelectorAll("[data-bassview]").forEach((b) => b.addEventListener("click", () => {
+  state.bassView = b.dataset.bassview;
+  drawModal();
+}));
+document.querySelectorAll("[data-when]").forEach((b) => b.addEventListener("click", () => {
+  state.when = b.dataset.when;
+  document.querySelectorAll("[data-when]").forEach((x) => x.setAttribute("aria-checked", x === b));
+  setLayer(state.layer ?? "refl");
+}));
 $("freq").addEventListener("input", drawModal);
+$("slice-z").addEventListener("input", drawModal);
 
 let sweeping = null;
 $("btn-sweep").addEventListener("click", () => {
@@ -643,6 +739,56 @@ $("btn-sweep").addEventListener("click", () => {
     sweeping = requestAnimationFrame(step);
   };
   sweeping = requestAnimationFrame(step);
+});
+
+// ---------- clap replay: sound particles ----------
+
+let materialsTable = null;
+async function loadMaterials() {
+  materialsTable ??= Object.fromEntries((await (await fetch("/api/materials")).json()).map((m) => [m.id, m]));
+  return materialsTable;
+}
+
+let stopReplay = null;
+function endReplay() {
+  stopReplay = null;
+  $("btn-replay").textContent = "Replay the clap";
+  setLayer(state.layer ?? "sti");   // bring the map back
+}
+
+$("btn-replay").addEventListener("click", async () => {
+  if (stopReplay) { stopReplay(); endReplay(); return; }
+  const res = state.analysis, m = res?.maps;
+  if (!m || !res.rt_mid_s) return;
+  const room = currentRoom();
+  const pls = planes(room, surfaceAlpha(room, await loadMaterials()));
+  const k = calibrate(room, pls, m.source, res.rt_mid_s);
+  const plan = withPlan();
+  const rects = plan ? state.plan.placement.rects : [];
+  const byName = Object.fromEntries(pls.map((p) => [p.name, p]));
+  const absorb = (pl, hit) => {
+    for (const r of rects) {
+      if (r.surface !== pl.name) continue;
+      const [u, v] = local(pl, hit), [cu, cv] = local(byName[r.surface], r.center);
+      if (Math.abs(u - cu) <= r.w / 2 && Math.abs(v - cv) <= r.h / 2) return r.alpha;
+    }
+    return Math.min(0.95, pl.alpha * k);
+  };
+  const sim = makeParticles(room, pls, m.source, absorb, 1500, 7);
+  showGrid(V3(), null);                 // nothing between the particles and the camera
+  clear(V3(), "refl", "cloud");
+  const rt = plan ? state.plan.after_mid_s : res.rt_mid_s;
+  $("btn-replay").textContent = "Stop";
+  $("map-help").textContent = `Sound from a clap at the orange dot, bouncing and fading as each surface absorbs it, shown 10 times slower. ` +
+    `The absorption is set so it dies away with the measured RT60 of ${res.rt_mid_s.toFixed(2)} s${plan ? "; the pieces of the plan absorb with their own coefficients" : ""}. ` +
+    "This is how sound behaves above the Schroeder frequency; the bass is modal (see Bass).";
+  stopReplay = playParticles(V3(), sim, {
+    slow: 10, maxT: Math.max(1, 2 * rt),
+    onTick: (t, level) => {
+      $("replay-status").textContent = `${Math.round(t * 1000)} ms after the clap · ${Math.max(-60, level).toFixed(0)} dB`;
+    },
+    onDone: endReplay,
+  });
 });
 
 // ---------- plan ----------
@@ -702,6 +848,13 @@ $("btn-plan").addEventListener("click", async () => {
   btn.disabled = false;
   if (!p) { out.innerHTML = `<p class="coach bad">Couldn't make a plan. Try again.</p>`; return; }
   out.innerHTML = renderPlan(p);
+  state.plan = p;
+  if (p.placement?.rects?.length) {
+    state.when = "after";
+    $("plan-toggle").hidden = false;
+    document.querySelectorAll("[data-when]").forEach((x) => x.setAttribute("aria-checked", x.dataset.when === "after"));
+    setLayer(state.layer === "sti" || !state.layer ? "refl" : state.layer);
+  }
 });
 
 const WHERE = { wall: "on the walls", floor: "on the floor", ceiling: "on the ceiling", window: "over the window" };
@@ -725,6 +878,11 @@ function renderPlan(p) {
     ? `<ul class="plan-items">${p.treatments.map(planItem).join("")}</ul>
       <div class="plan-total"><span>Total</span><span>€${p.cost_eur}</span></div>`
     : "";
+  const place = p.placement?.groups?.length ? `
+    <div class="placement"><h4>Where to put them</h4>
+      <ul>${p.placement.groups.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>
+      <p class="sub small">Walls are lettered in the 3D view. Pieces go where the early reflections are strongest; switch the view to Reflections to see them.</p>
+    </div>` : "";
   const tries = p.trace.filter((s) => s.tool);
   const trace = tries.length ? `
     <details class="trace"><summary>How it decided (${plural(tries.length, "try").replace("trys", "tries")})</summary><ol>
@@ -738,6 +896,7 @@ function renderPlan(p) {
     <div class="chart">${rtChart(state.analysis.bands, state.analysis.verdict.range_s, p.predicted_rt_s, true)}</div>
     <div class="chart-legend"><span><i style="background:var(--accent)"></i>Measured</span><span><i class="after-key"></i>Predicted after the plan</span></div>
     ${items}
+    ${place}
     <p class="plan-summary">${esc(p.summary)}</p>
     ${trace}
     ${p.source === "fallback" ? `<p class="sub small">Nemotron wasn't available, so this plan comes from a simple rule.</p>` : ""}`;

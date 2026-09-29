@@ -189,6 +189,8 @@ class Offer:
     piece_m2: float
     covers_m2: float
     eur_per_m2: float
+    width_cm: float
+    height_cm: float
     thickness_cm: float | None
     evidence: list[str]
 
@@ -245,6 +247,7 @@ def verify(tid: str, found, page: str) -> tuple[Offer | None, str]:
         treatment=tid, name=found.name.strip()[:120], url=found.url,
         site=urlparse(found.url).netloc.removeprefix("www."), price_eur=round(price, 2),
         pieces=pieces, piece_m2=round(piece_m2, 4), covers_m2=round(covers, 4), eur_per_m2=round(eur_m2, 2),
+        width_cm=round(w, 1), height_cm=round(h, 1),
         thickness_cm=round(thick, 1) if thick else None, evidence=evidence[:3],
     ), ""
 

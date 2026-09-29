@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import materials, shop, targets
-from .acoustics import decay, maps, modes, reverb, sweep, treat
+from .acoustics import decay, geometry, maps, modes, reverb, sweep, treat
 from .agents import intake, optimizer, planner
 from .room import Room
 
@@ -269,6 +269,8 @@ class OfferIn(BaseModel):
     pieces: int = Field(1, ge=1, le=500)
     piece_m2: float = Field(gt=0, le=30)
     thickness_cm: float | None = None
+    width_cm: float | None = Field(None, gt=0, le=2000)
+    height_cm: float | None = Field(None, gt=0, le=2000)
     evidence: list[str] = Field(default_factory=list, max_length=3)
 
 
@@ -381,6 +383,21 @@ def make_plan(req: PlanRequest, request: Request) -> dict:
         n = buys.get(f"{t['id']}@{t['where']}")
         t["product"] = {**o.model_dump(), "buys": n, "units": n * o.pieces} if o and n else None
     out["priced_with"] = "shops" if offers else "typical"
+
+    # Where everything goes, what that does to the early reflections, and
+    # speech clarity with the predicted RT.
+    m = rep.get("maps") or {}
+    if m.get("reflections") is not None and plan.treatments:
+        sizes = {tid: (o.width_cm / 100, o.height_cm / 100) for tid, o in offers.items() if o.width_cm and o.height_cm}
+        placement = geometry.place(room, [t.model_dump() for t in plan.treatments], m["reflections"], sizes)
+        alpha = {tid: geometry._alpha_mid(c["material"]) for tid, c in treat.catalogue().items()}
+        for r in placement["rects"]:
+            r["alpha"] = round(alpha.get(r["id"], 0.5), 3)   # the clap replay absorbs with it
+        out["placement"] = placement
+        out["reflections_after"] = geometry.reflections_after(room, m["reflections"], placement["rects"], alpha)
+    if m.get("source"):
+        sti = maps.sti_map(room, plan.predicted_rt_s, maps.Point3(**m["source"]))
+        out["maps_after"] = {"sti": sti.to_dict(), "sti_summary": maps.summarize(sti)}
     return out
 
 

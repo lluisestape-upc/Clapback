@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from ..room import OCTAVE_BANDS_HZ, Point3, Room
+from . import geometry
 from .modes import SPEED_OF_SOUND, room_modes
 
 LISTENER_Z = 1.2
@@ -163,6 +164,17 @@ def all_maps(room: Room, rt_bands: list[float | None], goal: str = "", source: P
         "rt_low_s": rt_low,
     }
     out["sti_summary"] = summarize(Grid(**out["sti"]))
+
+    # Where to sit (rectangular rooms: the modal model needs a box), then the
+    # early reflections from the source to the listener there.
+    seat = None
+    if room.is_rectangular():
+        f_hi = float(np.clip(2000 * math.sqrt(rt_1k / room.volume()), 100, 250))
+        out["evenness"] = geometry.bass_evenness(room, src, rt_low, f_hi)
+        seat = Point3(**out["evenness"]["seat"])
+    listener = geometry.default_listener(room, goal, src, seat)
+    out["listener"] = listener.model_dump()
+    out["reflections"] = geometry.early_reflections(room, src, listener)
     return out
 
 
